@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+
+requests
+yfinance
+
+langchain-core
+deepagents
+langchain-openai

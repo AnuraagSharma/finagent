@@ -1,0 +1,1 @@
+mcp = https://mcp.tavily.com/mcp/?tavilyApiKey=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
