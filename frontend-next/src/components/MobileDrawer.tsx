@@ -63,7 +63,8 @@ export function MobileDrawer(props: Props) {
               <Sidebar
                 activeThreadId={props.activeThreadId}
                 collapsed={false}
-                onToggleCollapsed={() => {}}
+                brandToggleDismissesOverlay
+                onToggleCollapsed={() => onClose()}
                 onNewChat={() => {
                   props.onNewChat();
                   onClose();

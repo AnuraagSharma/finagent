@@ -7,6 +7,8 @@ export type StreamHooks = {
   onToken?: (text: string) => void;
   onDone?: (e: { thread_id: string; ms: number }) => void;
   onError?: (msg: string) => void;
+  /** Fetch was aborted (user clicked Stop or navigated away). */
+  onAbort?: () => void;
 };
 
 export function streamAgent({
@@ -93,7 +95,10 @@ export function streamAgent({
       }
     } catch (err: unknown) {
       const e = err as { name?: string; message?: string };
-      if (e?.name === "AbortError") return;
+      if (e?.name === "AbortError") {
+        hooks.onAbort?.();
+        return;
+      }
       hooks.onError?.(e?.message || String(err));
     }
   })();

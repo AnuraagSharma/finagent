@@ -160,8 +160,7 @@ export function Hero({ onPick }: { onPick: (text: string) => void }) {
         </h1>
 
         <p className="mx-auto mt-3 mb-7 max-w-[640px] text-[15px] leading-[1.65] text-[var(--muted)]">
-          A deep agent for financial research. It orchestrates retrieval, fundamentals, comparables,
-          and analysis. Pick a starter or ask anything.
+          Deep research across retrieval, fundamentals, comparables, and filings — type a question or use a suggestion below.
         </p>
 
         <div className="mx-auto grid max-w-[860px] grid-cols-1 gap-3 sm:grid-cols-2">

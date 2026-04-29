@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any, Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -181,8 +183,16 @@ def _chunk_text(chunk: Any) -> str:
     return ""
 
 
+def _advance_stream_iter(sync_it: Iterator[Any]) -> tuple[Any, bool]:
+    """Run next() in a thread-friendly wrapper; returns (item, finished)."""
+    try:
+        return next(sync_it), False
+    except StopIteration:
+        return None, True
+
+
 @router.post("/stream")
-def stream_agent(
+async def stream_agent(
     body: AgentRunRequest,
     request: Request,
     user_id: str = Depends(get_user_id_from_headers),
@@ -191,7 +201,7 @@ def stream_agent(
     thread_id = body.thread_id or str(uuid.uuid4())
     agent = build_fin_deep_agent(redis_url=settings.redis_url, model=settings.openai_model)
 
-    def generator() -> Iterator[bytes]:
+    async def sse_gen() -> AsyncIterator[bytes]:
         started = time.perf_counter()
         full_text_parts: list[str] = []
         inflight_tools: dict[str, str] = {}
@@ -205,15 +215,22 @@ def stream_agent(
                 },
                 stream_mode=["messages", "updates"],
             )
-            for item in stream:
-                # When multiple stream_modes are passed, LangGraph yields (mode, payload)
+            sync_it = iter(stream)
+            while True:
+                if await request.is_disconnected():
+                    return
+                item, finished = await asyncio.to_thread(_advance_stream_iter, sync_it)
+                if finished:
+                    break
+                if await request.is_disconnected():
+                    return
+
                 if isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str):
                     mode, payload = item
                 else:
                     mode, payload = "messages", item
 
                 if mode == "messages":
-                    # payload is (chunk, metadata)
                     if isinstance(payload, tuple) and len(payload) >= 2:
                         chunk, metadata = payload[0], payload[1]
                     else:
@@ -234,7 +251,6 @@ def stream_agent(
                         if not isinstance(update, dict):
                             continue
 
-                        # New messages appended at this node
                         msgs = update.get("messages") or []
                         if not isinstance(msgs, list):
                             msgs = [msgs]
@@ -264,7 +280,6 @@ def stream_agent(
                                         }
                                     )
 
-                            # Tool result message → step completed
                             msg_type = getattr(msg, "type", None)
                             if msg_type == "tool":
                                 tid = getattr(msg, "tool_call_id", None)
@@ -281,7 +296,6 @@ def stream_agent(
                                     }
                                 )
 
-                        # Todos changes (deepagents writes these via write_todos)
                         if "todos" in update:
                             todos_raw = update.get("todos") or []
                             items: list[dict[str, Any]] = []
@@ -305,9 +319,9 @@ def stream_agent(
             full_text = "".join(full_text_parts).strip()
             latency_ms = (time.perf_counter() - started) * 1000.0
 
-            # Persist for analytics
             try:
                 from finagent.api.main import session_factory
+
                 with session_scope(session_factory) as session:
                     session.add(
                         AgentInteraction(
@@ -320,7 +334,6 @@ def stream_agent(
                         )
                     )
             except Exception:
-                # Don't break the stream if logging fails
                 pass
 
             yield _sse({"type": "done", "thread_id": thread_id, "ms": int(latency_ms)})
@@ -328,7 +341,7 @@ def stream_agent(
             yield _sse({"type": "error", "message": str(e)})
 
     return StreamingResponse(
-        generator(),
+        sse_gen(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

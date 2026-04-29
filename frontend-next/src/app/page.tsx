@@ -1,7 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ArrowDown } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
@@ -18,6 +25,11 @@ import { MobileDrawer } from "@/components/MobileDrawer";
 import { CommandPalette } from "@/components/CommandPalette";
 import { useToast } from "@/components/Toaster";
 import { useRecents, useSettings } from "@/lib/stores";
+import {
+  clearStoredActiveSession,
+  readStoredActiveSession,
+  writeStoredActiveSession,
+} from "@/lib/activeSession";
 import { getThreadHistory, streamAgent } from "@/lib/api";
 import { useHotkey } from "@/lib/useHotkeys";
 import type { ChatMessage, StepEvent, TodoItem } from "@/lib/types";
@@ -26,8 +38,10 @@ function prettyName(name: string) {
   return String(name || "step").replace(/[_-]+/g, " ");
 }
 
+
 export default function Home() {
   const { userId, backendUrl } = useSettings();
+  const prefersReducedMotion = useReducedMotion();
   const { upsert } = useRecents();
   const show = useToast((s) => s.show);
 
@@ -35,7 +49,7 @@ export default function Home() {
   const [topbarTitle, setTopbarTitle] = useState("New chat");
   const [transcript, setTranscript] = useState<ChatMessage[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   // Streaming state
   const [streaming, setStreaming] = useState(false);
@@ -51,6 +65,12 @@ export default function Home() {
   const [topbarScrolled, setTopbarScrolled] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
+  /** Mirrors streaming assistant text so Stop can persist a partial bubble. */
+  const streamAccumRef = useRef("");
+  /** Bumped when starting a new navigation context so stale stream callbacks are ignored. */
+  const streamEpochRef = useRef(0);
+  /** Thread id for the in-flight streamed turn (continuation or backend start). */
+  const streamThreadIdRef = useRef<string | null>(null);
 
   // Sheets / modals
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -64,6 +84,7 @@ export default function Home() {
 
   const composerRef = useRef<ComposerHandle | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const restoredSessionRef = useRef(false);
 
   // Scroll listener
   useEffect(() => {
@@ -102,13 +123,83 @@ export default function Home() {
   });
   useHotkey("mod+shift+l", (e) => {
     e.preventDefault();
-    // toggle sidebar
     setSidebarCollapsed((v) => !v);
   });
 
+  const resumeThread = useCallback(
+    async (id: string, title: string) => {
+      streamEpochRef.current += 1;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      streamAccumRef.current = "";
+      streamThreadIdRef.current = null;
+      setStreaming(false);
+      setThreadId(id);
+      setTranscript([]);
+      setSteps([]);
+      setTodos([]);
+      setTaskVisible(false);
+      setStreamingText("");
+      setStreamingMeta(null);
+      setStreamFinalized(false);
+      setTopbarTitle(title || "Resumed chat");
+      setStatus("Loading history…");
+      setHistoryLoading(true);
+      try {
+        const data = await getThreadHistory({
+          backendUrl,
+          userId,
+          threadId: id,
+        });
+        if (data.messages.length === 0) {
+          setTranscript([]);
+          show("No prior history; continue the conversation.");
+        } else {
+          setTranscript(
+            data.messages.map((m) => ({
+              role: m.role,
+              text: m.text,
+              ts: Date.now(),
+            }))
+          );
+        }
+        setStatus("Ready.");
+      } catch (e: unknown) {
+        const err = e as { message?: string };
+        setStatus("History unavailable.");
+        clearStoredActiveSession();
+        setThreadId(null);
+        setTopbarTitle("New chat");
+        show(`History error: ${err.message || String(e)}`);
+      } finally {
+        setHistoryLoading(false);
+      }
+    },
+    [backendUrl, userId, show]
+  );
+
+  /** After reload: resume last active thread from sessionStorage. */
+  useLayoutEffect(() => {
+    if (restoredSessionRef.current) return;
+    const saved = readStoredActiveSession();
+    if (!saved) return;
+    restoredSessionRef.current = true;
+    void resumeThread(saved.threadId, saved.title);
+  }, [resumeThread]);
+
+  /** Keep active thread across refresh (never clear here when threadId is null — that used to wipe storage before restore on mount). */
+  useEffect(() => {
+    if (!threadId) return;
+    writeStoredActiveSession({ threadId, title: topbarTitle });
+  }, [threadId, topbarTitle]);
+
   function newChat() {
+    streamEpochRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = null;
+    clearStoredActiveSession();
+    streamAccumRef.current = "";
+    streamThreadIdRef.current = null;
     setStreaming(false);
     setThreadId(null);
     setTranscript([]);
@@ -123,49 +214,6 @@ export default function Home() {
     setTopbarTitle("New chat");
     setStatus("Ready.");
     composerRef.current?.focus();
-  }
-
-  async function resumeThread(id: string, title: string) {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setStreaming(false);
-    setThreadId(id);
-    setTranscript([]);
-    setSteps([]);
-    setTodos([]);
-    setTaskVisible(false);
-    setStreamingText("");
-    setStreamingMeta(null);
-    setStreamFinalized(false);
-    setTopbarTitle(title || "Resumed chat");
-    setStatus("Loading history…");
-    setHistoryLoading(true);
-    try {
-      const data = await getThreadHistory({
-        backendUrl,
-        userId,
-        threadId: id,
-      });
-      if (data.messages.length === 0) {
-        setTranscript([]);
-        show("No prior history; continue the conversation.");
-      } else {
-        setTranscript(
-          data.messages.map((m) => ({
-            role: m.role,
-            text: m.text,
-            ts: Date.now(),
-          }))
-        );
-      }
-      setStatus("Ready.");
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      setStatus("History unavailable.");
-      show(`History error: ${err.message || String(e)}`);
-    } finally {
-      setHistoryLoading(false);
-    }
   }
 
   function pickPrompt(text: string) {
@@ -202,11 +250,6 @@ export default function Home() {
 
   function stopStream() {
     abortRef.current?.abort();
-    abortRef.current = null;
-    setStreaming(false);
-    setStatus("Stopped.");
-    show("Stopped.");
-    setStreamFinalized(true);
   }
 
   function pushUser(text: string) {
@@ -251,6 +294,7 @@ export default function Home() {
   async function send(text: string, opts: { skipPushUser?: boolean } = {}) {
     if (!text.trim() || streaming) return;
 
+    const epoch = streamEpochRef.current;
     if (!opts.skipPushUser) pushUser(text);
 
     setSteps([
@@ -275,6 +319,9 @@ export default function Home() {
     setStreamingMeta(null);
     setStreamFinalized(false);
 
+    streamAccumRef.current = "";
+    streamThreadIdRef.current = threadId;
+
     setStreaming(true);
     setStatus("Thinking…");
 
@@ -289,7 +336,10 @@ export default function Home() {
       message: text,
       hooks: {
         onStart: ({ thread_id }) => {
-          if (thread_id) setThreadId(thread_id);
+          if (thread_id) {
+            streamThreadIdRef.current = thread_id;
+            setThreadId(thread_id);
+          }
           setStatus("Streaming…");
           if (transcript.filter((t) => t.role === "user").length === 0) {
             setTopbarTitle(text.slice(0, 80));
@@ -341,9 +391,32 @@ export default function Home() {
             );
           }
           buffer += t;
+          streamAccumRef.current = buffer;
           setStreamingText(buffer);
         },
+        onAbort: () => {
+          if (epoch !== streamEpochRef.current) return;
+          abortRef.current = null;
+          const partial = streamAccumRef.current.trim();
+          streamAccumRef.current = "";
+          setStreaming(false);
+          setStreamingText("");
+          setStatus("Stopped.");
+          setTaskDone(true);
+          setTaskMs(null);
+          setTimeout(() => setTaskVisible(false), 450);
+          setStreamFinalized(true);
+          if (partial.length > 0) {
+            pushAssistantFinal(`${partial}\n\n— *Stopped*`);
+            const sid = streamThreadIdRef.current;
+            if (sid) {
+              upsert({ threadId: sid, title: text.slice(0, 80) });
+            }
+          }
+          show("Stopped.");
+        },
         onDone: ({ thread_id, ms }) => {
+          if (epoch !== streamEpochRef.current) return;
           if (thread_id) setThreadId(thread_id);
           const took = ms ?? Math.round(performance.now() - startedAt);
           setTaskDone(true);
@@ -351,6 +424,7 @@ export default function Home() {
           setTimeout(() => setTaskVisible(false), 600);
 
           const finalText = buffer || "(no response)";
+          streamAccumRef.current = "";
           pushAssistantFinal(finalText, `${thread_id} • ${took}ms`);
 
           if (thread_id) {
@@ -363,6 +437,8 @@ export default function Home() {
           abortRef.current = null;
         },
         onError: (msg) => {
+          if (epoch !== streamEpochRef.current) return;
+          streamAccumRef.current = "";
           setStatus("Error.");
           setStreaming(false);
           setTaskDone(true);
@@ -386,9 +462,22 @@ export default function Home() {
   }, [streaming, streamingText, streamFinalized]);
 
   return (
-    <div className="grid h-screen grid-cols-1 lg:grid-cols-[auto_1fr]">
-      {/* Stack above main so edge overflow (collapse handle) isn't painted underneath */}
-      <div className="relative z-[100] hidden min-h-0 overflow-visible lg:block">
+    <div className="flex h-screen min-h-0 flex-col lg:flex-row">
+      {/* Width animates quickly; content tracks collapsed flag immediately so nothing “pops in” after. */}
+      <motion.div
+        className="relative z-[100] hidden h-screen min-h-0 shrink-0 overflow-hidden lg:block"
+        initial={false}
+        animate={{ width: sidebarCollapsed ? 72 : 284 }}
+        transition={
+          prefersReducedMotion
+            ? { duration: 0.08, ease: "easeOut" }
+            : {
+                type: "tween",
+                duration: 0.2,
+                ease: [0.25, 0.1, 0.25, 1],
+              }
+        }
+      >
         <Sidebar
           activeThreadId={threadId}
           collapsed={sidebarCollapsed}
@@ -399,9 +488,12 @@ export default function Home() {
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenCommandPalette={() => setPaletteOpen(true)}
         />
-      </div>
+      </motion.div>
 
-      <main className="relative z-0 flex h-screen min-h-0 min-w-0 flex-col">
+      <motion.main
+        layout={false}
+        className="relative z-0 flex min-h-0 min-w-0 flex-1 flex-col"
+      >
         <Topbar
           title={topbarTitle}
           scrolled={topbarScrolled}
@@ -466,7 +558,7 @@ export default function Home() {
                 exit={{ opacity: 0, y: 8 }}
                 transition={{ duration: 0.18 }}
                 onClick={() => scrollToBottom(true)}
-                className="absolute bottom-[112px] right-4 grid h-10 w-10 place-items-center rounded-full border border-[var(--stroke-2)] bg-[var(--glass-2)] shadow-[var(--shadow-2)] backdrop-blur-md hover:bg-white/[0.08]"
+                className="absolute bottom-[124px] right-4 z-[30] grid h-10 w-10 place-items-center rounded-full border border-[var(--stroke-2)] bg-[var(--glass-2)] shadow-[var(--shadow-2)] backdrop-blur-md hover:bg-white/[0.08] max-sm:right-5 max-sm:bottom-[128px]"
                 aria-label="Scroll to bottom"
               >
                 <ArrowDown size={15} />
@@ -479,10 +571,10 @@ export default function Home() {
             onSend={(t) => send(t)}
             onStop={stopStream}
             isStreaming={streaming}
-            disabled={historyLoading}
+            disabled={historyLoading || streaming}
           />
         </section>
-      </main>
+      </motion.main>
 
       {/* Sheets */}
       <Sheet
