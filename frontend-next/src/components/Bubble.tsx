@@ -13,6 +13,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Reply,
+  User,
 } from "lucide-react";
 
 type Props = {
@@ -71,10 +72,14 @@ function Avatar({ role }: { role: "user" | "assistant" }) {
   }
   return (
     <div
-      className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[var(--stroke-2)] bg-[var(--bg-2)] text-[12px] font-extrabold text-[var(--text)]"
+      className={cn(
+        "grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-[color-mix(in_oklab,var(--ai)_38%,transparent)]",
+        "bg-[color-mix(in_oklab,var(--bg-2)_90%,var(--ai)_10%)]",
+        "text-[var(--ai-2)] shadow-[0_2px_14px_rgba(0,0,0,0.22)]"
+      )}
       aria-label="You"
     >
-      U
+      <User size={14} strokeWidth={2.4} aria-hidden />
     </div>
   );
 }
@@ -119,16 +124,27 @@ export function Bubble({ role, text, meta, onRegenerate, onFollowup }: Props) {
     </div>
   );
 
-  // User bubble — neutral panel, no green
+  // User bubble — right-aligned “you”; subtle ai-tint identity, typography aligned with assistant
   const userBubble = (
     <div
       className={cn(
-        "max-w-[78%] rounded-[16px] border border-[var(--stroke-2)] bg-[var(--panel)] px-4 py-3 text-[14.5px]",
-        "shadow-[0_8px_24px_rgba(0,0,0,0.25)] ring-inset-soft"
+        "relative max-w-[min(92%,38rem)] rounded-2xl rounded-br-[10px]",
+        "border border-[var(--stroke)]/90 bg-[color-mix(in_oklab,var(--panel-2)_90%,var(--ai)_10%)]",
+        "shadow-[0_10px_40px_rgba(0,0,0,0.32),inset_0_1px_0_rgba(255,255,255,0.06)]",
+        "ring-inset-soft",
+        "after:pointer-events-none after:absolute after:inset-y-3 after:right-0 after:w-px after:rounded-full after:bg-[color-mix(in_oklab,var(--ai)_65%,transparent)] after:opacity-70"
       )}
     >
       <div
-        className="whitespace-pre-wrap break-words leading-relaxed text-[var(--text)] [&_p]:m-0"
+        className={cn(
+          "px-4 py-3.5",
+          "whitespace-pre-wrap break-words text-[15px] leading-[1.65] text-[var(--text)]",
+          "[&_p]:m-0 [&_p+p]:mt-2.5",
+          "[&_strong]:font-semibold [&_strong]:text-[var(--text)]",
+          "[&_code]:rounded-md [&_code]:border [&_code]:border-[var(--stroke)]/80 [&_code]:bg-[color-mix(in_oklab,var(--bg)_55%,black_35%)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[13px]",
+          "[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-[1.2em]",
+          "[&_li]:mt-1"
+        )}
         dangerouslySetInnerHTML={{ __html: renderMarkdownLite(text) }}
       />
     </div>
@@ -203,12 +219,17 @@ export function Bubble({ role, text, meta, onRegenerate, onFollowup }: Props) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22 }}
+      initial={
+        isAssistant ? { opacity: 0, y: 6 } : { opacity: 0, y: 10, scale: 0.985 }
+      }
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={
+        isAssistant
+          ? { duration: 0.22 }
+          : { type: "spring", stiffness: 440, damping: 32 }
+      }
       className={cn(
-        "mx-auto flex items-start gap-3 px-2",
-        "max-w-[920px] my-3",
+        "mx-auto flex w-full max-w-[920px] items-start gap-3 px-2",
         isAssistant ? "justify-start" : "justify-end"
       )}
     >

@@ -511,12 +511,12 @@ export default function Home() {
         <section className="relative flex min-h-0 flex-1 flex-col">
           <div
             ref={messagesRef}
-            className="scroll-area flex-1 overflow-auto py-5 pl-4 pr-4"
+            className="scroll-area flex-1 overflow-auto py-6 pl-4 pr-4"
           >
             {showHero ? (
               <Hero onPick={pickPrompt} />
             ) : (
-              <>
+              <div className="flex flex-col gap-7 pb-2">
                 {historyLoading && <HistorySkeleton />}
                 {transcript.map((m, i) => {
                   const isLastAssistant =
@@ -538,13 +538,14 @@ export default function Home() {
                   done={taskDone}
                   ms={taskMs}
                   visible={taskVisible}
+                  replyDrafting={streaming && streamingText.length > 0}
                   prettyName={prettyName}
                 />
 
                 {visibleStreamingBubble && (
                   <StreamingBubble text={streamingText} done={false} />
                 )}
-              </>
+              </div>
             )}
           </div>
 

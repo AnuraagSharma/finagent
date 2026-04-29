@@ -75,8 +75,10 @@
   --composer-toolbar-bg: color-mix(in oklab, var(--panel-2) 62%, black 38%);
   --composer-stroke: color-mix(in oklab, white 11%, transparent);
   --composer-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055), 0 16px 52px rgba(0, 0, 0, 0.58);
-  --composer-shadow-focus: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 0 0 1px var(--stroke-accent),
-    0 20px 60px rgba(0, 0, 0, 0.5);
+  /* Focus: hint of accent only — avoid loud green ring */
+  --composer-border-focus: color-mix(in oklab, var(--composer-stroke) 86%, var(--accent) 14%);
+  --composer-shadow-focus:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 12px 46px rgba(0, 0, 0, 0.52);
 }
 
 [data-theme="light"] {
@@ -131,8 +133,9 @@
   --composer-toolbar-bg: color-mix(in oklab, var(--bg-2) 78%, white 22%);
   --composer-stroke: rgba(15, 23, 42, 0.12);
   --composer-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 14px 40px rgba(15, 23, 42, 0.08);
-  --composer-shadow-focus: inset 0 1px 0 rgba(255, 255, 255, 0.75), 0 0 0 1px var(--stroke-accent),
-    0 18px 44px rgba(15, 23, 42, 0.1);
+  --composer-border-focus: color-mix(in oklab, var(--composer-stroke) 82%, var(--accent) 18%);
+  --composer-shadow-focus:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 12px 36px rgba(15, 23, 42, 0.08);
 }
 
 /* Bridge to Tailwind's @theme so utilities like bg-bg, text-text work */
@@ -357,7 +360,7 @@ kbd,
 }
 
 .composer-shell:focus-within {
-  border-color: var(--stroke-accent);
+  border-color: var(--composer-border-focus);
   box-shadow: var(--composer-shadow-focus);
 }
 
@@ -382,6 +385,57 @@ kbd,
 
 [data-theme="light"] .composer-input-row {
   background: color-mix(in oklab, var(--composer-shell) 88%, white 12%);
+}
+
+/* Live streaming assistant — subtle cue while tokens arrive */
+.streaming-avatar-live {
+  outline: 1px solid color-mix(in oklab, var(--accent) 45%, transparent);
+  animation: streamAvatarGlow 2.2s ease-in-out infinite;
+}
+.streaming-card-live {
+  animation: streamCardGlow 3s ease-in-out infinite;
+}
+@keyframes streamAvatarGlow {
+  0%,
+  100% {
+    filter: saturate(1) brightness(1);
+  }
+  50% {
+    filter: saturate(1.08) brightness(1.05);
+  }
+}
+@keyframes streamCardGlow {
+  0%,
+  100% {
+    border-color: color-mix(in oklab, var(--stroke) 100%, transparent);
+  }
+  50% {
+    border-color: color-mix(in oklab, var(--stroke-accent) 55%, var(--stroke) 45%);
+  }
+}
+.live-dot-indicator {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
+  animation: liveDotPulse 1.6s ease-in-out infinite;
+}
+@keyframes liveDotPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(0.92);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .streaming-avatar-live,
+  .streaming-card-live {
+    animation: none;
+  }
+  .live-dot-indicator {
+    animation: none;
+  }
 }
 
 /* ============================================================

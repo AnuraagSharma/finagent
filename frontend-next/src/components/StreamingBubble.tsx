@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { Markdown } from "./Markdown";
+import { cn } from "@/lib/cn";
 
 function AssistantMark({ size = 14 }: { size?: number }) {
   return (
@@ -36,20 +37,29 @@ export function StreamingBubble({
   text,
   done,
   meta,
+  live = true,
 }: {
   text: string;
   done: boolean;
   meta?: string;
+  /** Show live / drafting affordances (motion + label). Respects prefers-reduced-motion in CSS. */
+  live?: boolean;
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 4 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22 }}
-      className="mx-auto my-3 flex max-w-[920px] items-start gap-3 px-2 justify-start"
+      transition={{ duration: 0.28, ease: [0.2, 0.75, 0.15, 1] }}
+      className="mx-auto flex w-full max-w-[920px] items-start gap-3 justify-start px-2"
+      role="status"
+      aria-live="polite"
+      aria-busy={!done}
     >
       <div
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] text-[#06141b]"
+        className={cn(
+          "grid h-8 w-8 shrink-0 place-items-center rounded-[10px] text-[#06141b]",
+          live && !done && "streaming-avatar-live"
+        )}
         style={{
           background:
             "linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%)",
@@ -58,10 +68,26 @@ export function StreamingBubble({
       >
         <AssistantMark size={14} />
       </div>
-      <div className="max-w-[860px] flex-1">
+      <div className="max-w-[860px] flex-1 min-w-0">
         <div
-          className="relative rounded-[16px] border border-[var(--stroke)] bg-[var(--panel)]/60 px-4 py-4 ring-inset-soft before:absolute before:left-0 before:top-3 before:bottom-3 before:w-[2px] before:rounded-full before:bg-gradient-to-b before:from-[var(--accent)] before:to-[var(--accent-2)]"
+          className={cn(
+            "relative rounded-[16px] border border-[var(--stroke)] bg-[var(--panel)]/60 px-4 py-4 ring-inset-soft",
+            "before:absolute before:left-0 before:top-3 before:bottom-3 before:w-[2px] before:rounded-full before:bg-gradient-to-b before:from-[var(--accent)] before:to-[var(--accent-2)]",
+            live && !done && "streaming-card-live"
+          )}
         >
+          {live && !done && (
+            <div className="-mt-1 mb-3 flex flex-wrap items-center gap-2 border-b border-[var(--stroke)]/80 pb-2.5">
+              <span
+                className="live-dot-indicator inline-flex h-[7px] w-[7px] shrink-0 rounded-full bg-[var(--accent)]"
+                aria-hidden
+              />
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">
+                Live
+              </span>
+              <span className="text-[12.5px] text-[var(--muted)]">Drafting reply</span>
+            </div>
+          )}
           <div className="text-[15.5px] leading-[1.7] text-[var(--text)]">
             <Markdown text={text || ""} />
           </div>

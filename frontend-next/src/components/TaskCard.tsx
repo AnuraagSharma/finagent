@@ -49,6 +49,7 @@ export function TaskCard({
   done,
   ms,
   visible,
+  replyDrafting = false,
   prettyName,
 }: {
   steps: TaskStep[];
@@ -56,6 +57,8 @@ export function TaskCard({
   done: boolean;
   ms: number | null;
   visible: boolean;
+  /** True while assistant tokens stream — cues “scroll to answer” vs still in tools-only phase */
+  replyDrafting?: boolean;
   prettyName: (s: string) => string;
 }) {
   const [open, setOpen] = useState(true);
@@ -87,9 +90,13 @@ export function TaskCard({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -4, scale: 0.985 }}
           transition={{ duration: 0.32, ease: [0.2, 0.7, 0.2, 1] }}
-          className="mx-auto my-3 max-w-[920px] px-2 pl-11 sm:pl-12"
+          className="mx-auto flex w-full max-w-[920px] items-start gap-3 px-2"
           aria-busy={!done}
+          role="status"
+          aria-live="polite"
         >
+          <span className="h-8 w-8 shrink-0" aria-hidden />
+          <div className="min-w-0 flex-1 max-w-[860px]">
           <div
             className={cn(
               "overflow-hidden rounded-2xl border border-[var(--stroke)] bg-[color-mix(in_oklab,var(--panel)_70%,var(--bg)_30%)] backdrop-blur-sm ring-inset-soft shadow-[0_12px_40px_rgba(0,0,0,0.28)]"
@@ -122,7 +129,13 @@ export function TaskCard({
                     {title}
                   </span>
                 </div>
-                {!done && activeStep && (
+                {!done && replyDrafting && (
+                  <p className="line-clamp-2 pl-9 text-[12.5px] leading-snug text-[var(--muted)]">
+                    <span className="font-medium text-[var(--accent)]">Reply · </span>
+                    streaming below
+                  </p>
+                )}
+                {!done && !replyDrafting && activeStep && (
                   <p className="line-clamp-2 pl-9 text-[12.5px] leading-snug text-[var(--muted)]">
                     <span className="text-[var(--muted-2)]">Now · </span>
                     {prettyName(activeStep.name)}
@@ -277,6 +290,7 @@ export function TaskCard({
                 </motion.div>
               )}
             </AnimatePresence>
+          </div>
           </div>
         </motion.div>
       )}
