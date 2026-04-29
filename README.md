@@ -49,5 +49,9 @@ uvicorn finagent.api.main:app --reload
 - Keep `.env` **out of git** (already ignored).
 - In production, set environment variables in your hosting platform instead of shipping `.env`.
 
+## Architecture notes (roadmap)
+
+- **Sandboxed Python + internal data strategy** (phased, not all built yet): see [`docs/sandbox-internal-data-roadmap.md`](docs/sandbox-internal-data-roadmap.md).
+
 ## Next milestone
 - Add a `POST /v1/agent/run` endpoint that uses `deepagents.create_deep_agent(model="openai:gpt-5.4", tools=financial_tools, ...)`.
