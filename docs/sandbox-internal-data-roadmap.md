@@ -1,5 +1,7 @@
 # Sandbox execution and internal data — roadmap
 
+Related: [Getting started](getting-started.md) · [Repository README](../README.md)
+
 This document captures architecture we are considering (not necessarily implemented yet): **sandboxed Python for analytics**, and **internal database–backed data** feeding the same analytics path. It is the single place to align on phased delivery and boundaries.
 
 ---

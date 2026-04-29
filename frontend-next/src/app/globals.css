@@ -499,29 +499,33 @@ kbd,
 /* ============================================================
    Marquee for ticker strip
    ============================================================ */
-@keyframes marquee {
-  0% {
-    transform: translateX(0);
-  }
-  100% {
-    transform: translateX(-50%);
-  }
-}
 .marquee-track {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 32px;
   width: max-content;
   white-space: nowrap;
-  animation: marquee 42s linear infinite;
+  animation: marquee 50s linear infinite;
   will-change: transform;
 }
-.marquee-track > * {
+.marquee-copy {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 36px;
+  padding-right: 36px; /* keeps spacing consistent at the seam between copies */
   flex: 0 0 auto;
 }
 .marquee-track:hover {
   animation-play-state: paused;
+}
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
 }
 
 /* ============================================================
@@ -536,12 +540,7 @@ kbd,
    Gradient text helper
    ============================================================ */
 .gradient-text {
-  background: linear-gradient(
-    100deg,
-    var(--accent) 0%,
-    var(--accent-3) 40%,
-    var(--ai-2) 100%
-  );
+  background: linear-gradient(120deg, var(--accent-3) 0%, var(--accent) 42%, var(--ai) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;

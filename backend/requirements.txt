@@ -10,5 +10,5 @@ requests
 yfinance
 
 langchain-core
-deepagents
+deepagents>=0.5.0
 langchain-openai

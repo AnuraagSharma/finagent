@@ -387,7 +387,8 @@ export default function Home() {
 
   return (
     <div className="grid h-screen grid-cols-1 lg:grid-cols-[auto_1fr]">
-      <div className="hidden lg:block">
+      {/* Stack above main so edge overflow (collapse handle) isn't painted underneath */}
+      <div className="relative z-[100] hidden min-h-0 overflow-visible lg:block">
         <Sidebar
           activeThreadId={threadId}
           collapsed={sidebarCollapsed}
@@ -400,7 +401,7 @@ export default function Home() {
         />
       </div>
 
-      <main className="flex h-screen min-h-0 min-w-0 flex-col">
+      <main className="relative z-0 flex h-screen min-h-0 min-w-0 flex-col">
         <Topbar
           title={topbarTitle}
           scrolled={topbarScrolled}
@@ -480,17 +481,6 @@ export default function Home() {
             isStreaming={streaming}
             disabled={historyLoading}
           />
-
-          <div className="mx-auto -mt-2 mb-2 flex max-w-[920px] items-center justify-between gap-2.5 px-5 text-[12px] text-[var(--muted-2)]">
-            <div>{status}</div>
-            <div>
-              <span className="kbd">Enter</span> send ·{" "}
-              <span className="kbd">Shift</span>+
-              <span className="kbd">Enter</span> newline ·{" "}
-              <span className="kbd">Ctrl</span>+<span className="kbd">K</span>{" "}
-              palette
-            </div>
-          </div>
         </section>
       </main>
 

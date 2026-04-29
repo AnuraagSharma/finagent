@@ -7,8 +7,7 @@ import {
   Settings as SettingsIcon,
   Plus,
   Search,
-  PanelLeftClose,
-  PanelLeftOpen,
+  ChevronLeft,
   Trash2,
 } from "lucide-react";
 import { useMemo } from "react";
@@ -83,13 +82,43 @@ export function Sidebar({
     <aside
       data-collapsed={collapsed}
       className={cn(
-        "sticky top-0 flex h-screen flex-col overflow-hidden border-r border-[var(--stroke)] bg-[linear-gradient(180deg,rgba(255,255,255,0.025),transparent_40%)]",
+        "relative isolate sticky top-0 flex h-screen flex-col overflow-visible border-r border-[var(--stroke)] bg-[linear-gradient(180deg,rgba(255,255,255,0.025),transparent_40%)]",
         "transition-[width] duration-200 ease-out",
         collapsed ? "w-[72px]" : "w-[284px]"
       )}
     >
+      {/* Edge rail handle — half-round tab (flat edge hugs sidebar border) */}
+      <Tooltip label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className={cn(
+            "sidebar-rail-handle group absolute top-[1.65rem] z-[120] flex h-9 w-[22px] -translate-y-px items-center justify-center",
+            "right-[-11px] rounded-l-full rounded-r-md",
+            "border border-[var(--stroke-2)] border-r border-[var(--stroke)] bg-[var(--panel-2)]",
+            "text-[var(--text)]/85 shadow-[2px_0_16px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.07)]",
+            "backdrop-blur-md transition-[color,background-color,border-color,box-shadow,transform] duration-200",
+            "hover:border-[var(--stroke-accent)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]",
+            "hover:shadow-[2px_0_20px_rgba(0,0,0,0.5),0_0_0_1px_rgba(52,211,153,0.12),inset_0_1px_0_rgba(255,255,255,0.1)]",
+            "active:scale-[0.97]"
+          )}
+        >
+          <span className="pointer-events-none flex h-full w-full items-center justify-center pl-0.5 leading-none">
+            <ChevronLeft
+              size={15}
+              strokeWidth={2.75}
+              className={cn(
+                "shrink-0 transition-transform duration-300 ease-out",
+                collapsed ? "rotate-180" : "rotate-0"
+              )}
+              aria-hidden
+            />
+          </span>
+        </button>
+      </Tooltip>
       {/* Top: brand */}
-      <div className="flex items-center justify-between gap-2 px-3.5 pt-4 pb-5">
+      <div className="flex items-center gap-2 px-3.5 pt-4 pb-5">
         <Tooltip label={collapsed ? "FinAgent · home" : "Home"}>
           <button
             type="button"
@@ -122,34 +151,7 @@ export function Sidebar({
             )}
           </button>
         </Tooltip>
-        {!collapsed && (
-          <Tooltip label="Collapse · Ctrl+Shift+L">
-            <button
-              type="button"
-              onClick={onToggleCollapsed}
-              className="grid h-8 w-8 place-items-center rounded-md text-[var(--muted-2)] hover:bg-white/5 hover:text-[var(--text)]"
-              aria-label="Collapse sidebar"
-            >
-              <PanelLeftClose size={15} />
-            </button>
-          </Tooltip>
-        )}
       </div>
-
-      {collapsed && (
-        <div className="px-3.5 pb-3">
-          <Tooltip label="Expand · Ctrl+Shift+L">
-            <button
-              type="button"
-              onClick={onToggleCollapsed}
-              aria-label="Expand sidebar"
-              className="grid h-9 w-10 place-items-center rounded-md border border-[var(--stroke)] text-[var(--muted-2)] hover:bg-white/5 hover:text-[var(--text)]"
-            >
-              <PanelLeftOpen size={15} />
-            </button>
-          </Tooltip>
-        </div>
-      )}
 
       {/* New Chat */}
       <div className="px-3.5 pb-4">

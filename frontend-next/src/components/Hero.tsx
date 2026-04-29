@@ -11,7 +11,7 @@ import {
   ArrowDown,
   ArrowUp,
 } from "lucide-react";
-import { Area, AreaChart, ResponsiveContainer } from "recharts";
+import { Area, AreaChart } from "recharts";
 import { useId, useMemo } from "react";
 import { cn } from "@/lib/cn";
 
@@ -95,24 +95,23 @@ function Sparkline({
   const stroke = positive ? "var(--gain)" : "var(--loss)";
   return (
     <div style={{ height, width }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={points} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
-          <defs>
-            <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={stroke} stopOpacity={0.55} />
-              <stop offset="100%" stopColor={stroke} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <Area
-            type="monotone"
-            dataKey="v"
-            stroke={stroke}
-            strokeWidth={1.8}
-            fill={"url(#" + gid + ")"}
-            isAnimationActive={false}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+      {/* Fixed dimensions avoid ResponsiveContainer SSR width/height -1 warnings */}
+      <AreaChart width={width} height={height} data={points} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity={0.55} />
+            <stop offset="100%" stopColor={stroke} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <Area
+          type="monotone"
+          dataKey="v"
+          stroke={stroke}
+          strokeWidth={1.8}
+          fill={"url(#" + gid + ")"}
+          isAnimationActive={false}
+        />
+      </AreaChart>
     </div>
   );
 }
@@ -237,22 +236,20 @@ export function Hero({ onPick }: { onPick: (text: string) => void }) {
         </div>
 
         <div className="relative mx-auto mt-6 max-w-[860px] overflow-hidden rounded-full border border-[var(--stroke)] bg-[var(--panel)] py-2.5 ring-inset-soft">
-          <div className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-12 bg-gradient-to-r from-[var(--panel)] to-transparent" />
-          <div className="pointer-events-none absolute inset-y-0 right-0 z-[1] w-12 bg-gradient-to-l from-[var(--panel)] to-transparent" />
-          <div className="marquee-track px-4">
-            {[...tickers, ...tickers, ...tickers].map((t, i) => (
-              <Ticker key={i} s={t.s} v={t.v} d={t.d} />
-            ))}
+          <div className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-6 bg-gradient-to-r from-[var(--panel)] to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 right-0 z-[1] w-6 bg-gradient-to-l from-[var(--panel)] to-transparent" />
+          <div className="marquee-track">
+            <div className="marquee-copy">
+              {tickers.map((t, i) => (
+                <Ticker key={"a-" + i} s={t.s} v={t.v} d={t.d} />
+              ))}
+            </div>
+            <div className="marquee-copy" aria-hidden>
+              {tickers.map((t, i) => (
+                <Ticker key={"b-" + i} s={t.s} v={t.v} d={t.d} />
+              ))}
+            </div>
           </div>
-        </div>
-
-        <div className="mx-auto mt-4 inline-flex max-w-[860px] items-center gap-2.5 rounded-full border border-[var(--stroke)] bg-white/[0.03] px-3.5 py-2 text-[12.5px] text-[var(--muted)]">
-          <span className="status-dot" />
-          <span>
-            <strong className="font-bold text-[var(--text)]">Tip:</strong> tap a card to prefill,
-            then press <span className="kbd">Enter</span>. Or jump anywhere with{" "}
-            <span className="kbd">Ctrl</span>+<span className="kbd">K</span>.
-          </span>
         </div>
       </motion.div>
     </section>
