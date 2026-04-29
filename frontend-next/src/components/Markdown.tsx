@@ -2,17 +2,9 @@
 
 import * as React from "react";
 import { TableChart, type ParsedTable } from "./TableChart";
+import { CodeBlock } from "./CodeBlock";
 
 /* ----------------------- Inline parsing ----------------------- */
-
-function escapeHtml(s: string) {
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
 
 /**
  * Render inline markdown to a JSX node:
@@ -45,7 +37,7 @@ function renderInline(text: string, keyBase: string): React.ReactNode {
       parts.push(
         <code
           key={`${keyBase}-c${i++}`}
-          className="rounded-md border border-[var(--stroke)] bg-white/5 px-1.5 py-0.5 text-[12.5px]"
+          className="rounded-[5px] bg-white/[0.07] px-[5px] py-[1.5px] font-mono text-[0.92em] text-[var(--text)]"
         >
           {token.slice(1, -1)}
         </code>
@@ -418,17 +410,7 @@ export function Markdown({ text }: { text: string }) {
           );
         }
         if (b.kind === "code") {
-          return (
-            <pre
-              key={idx}
-              className="my-3 overflow-auto rounded-[12px] border border-[var(--stroke)] bg-black/40 p-3 text-[12.5px] leading-[1.55] text-[var(--muted)]"
-            >
-              <code
-                className="!border-0 !bg-transparent !p-0"
-                dangerouslySetInnerHTML={{ __html: escapeHtml(b.code) }}
-              />
-            </pre>
-          );
+          return <CodeBlock key={idx} code={b.code} lang={b.lang} />;
         }
         if (b.kind === "table") {
           return <TableChart key={idx} table={b.table} />;

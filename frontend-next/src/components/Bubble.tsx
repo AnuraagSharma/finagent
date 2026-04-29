@@ -5,6 +5,7 @@ import { Markdown } from "./Markdown";
 import { renderMarkdownLite } from "@/lib/markdown";
 import { cn } from "@/lib/cn";
 import { useToast } from "./Toaster";
+import { Tooltip } from "./Tooltip";
 import { useState } from "react";
 import {
   Check,
@@ -13,7 +14,6 @@ import {
   ThumbsDown,
   ThumbsUp,
   Reply,
-  User,
 } from "lucide-react";
 
 type Props = {
@@ -24,91 +24,39 @@ type Props = {
   onFollowup?: () => void;
 };
 
-/** Branded mark for the assistant — small candle/chevron set */
-function AssistantMark({ size = 14 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden
-    >
-      <path
-        d="M5 19V5h11"
-        stroke="currentColor"
-        strokeWidth="2.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M5 12h7" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
-      <path
-        d="M14 14l3-3 3 3"
-        stroke="currentColor"
-        strokeWidth="2.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function Avatar({ role }: { role: "user" | "assistant" }) {
-  if (role === "assistant") {
-    return (
-      <div
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] text-[#06141b]"
-        style={{
-          background:
-            "linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%)",
-          boxShadow: "0 6px 16px var(--accent-glow)",
-        }}
-        aria-label="Assistant"
-      >
-        <AssistantMark size={14} />
-      </div>
-    );
-  }
-  return (
-    <div
-      className={cn(
-        "grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-[color-mix(in_oklab,var(--ai)_38%,transparent)]",
-        "bg-[color-mix(in_oklab,var(--bg-2)_90%,var(--ai)_10%)]",
-        "text-[var(--ai-2)] shadow-[0_2px_14px_rgba(0,0,0,0.22)]"
-      )}
-      aria-label="You"
-    >
-      <User size={14} strokeWidth={2.4} aria-hidden />
-    </div>
-  );
-}
-
-function Chip({
-  children,
+/** ChatGPT/Gemini-style minimal icon action — borderless, subtle hover, tooltip label. */
+function IconAction({
+  label,
   onClick,
   active,
-  title,
+  tone = "neutral",
+  children,
 }: {
-  children: React.ReactNode;
+  label: string;
   onClick: () => void;
   active?: boolean;
-  title?: string;
+  tone?: "neutral" | "accent";
+  children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-semibold transition-colors",
-        active
-          ? "border-[var(--stroke-accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-          : "border-[var(--stroke)] bg-white/[0.025] text-[var(--muted)] hover:border-[var(--stroke-2)] hover:bg-white/[0.06] hover:text-[var(--text)]"
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip label={label} placement="bottom">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={label}
+        className={cn(
+          "grid h-8 w-8 place-items-center rounded-lg transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--bg)]",
+          active
+            ? tone === "accent"
+              ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+              : "bg-white/[0.07] text-[var(--text)]"
+            : "text-[var(--muted-2)] hover:bg-white/[0.05] hover:text-[var(--text)]"
+        )}
+      >
+        {children}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -124,15 +72,12 @@ export function Bubble({ role, text, meta, onRegenerate, onFollowup }: Props) {
     </div>
   );
 
-  // User bubble — right-aligned “you”; subtle ai-tint identity, typography aligned with assistant
+  // User bubble — calm soft fill, no border / edge accent, ChatGPT-style
   const userBubble = (
     <div
       className={cn(
-        "relative max-w-[min(92%,38rem)] rounded-2xl rounded-br-[10px]",
-        "border border-[var(--stroke)]/90 bg-[color-mix(in_oklab,var(--panel-2)_90%,var(--ai)_10%)]",
-        "shadow-[0_10px_40px_rgba(0,0,0,0.32),inset_0_1px_0_rgba(255,255,255,0.06)]",
-        "ring-inset-soft",
-        "after:pointer-events-none after:absolute after:inset-y-3 after:right-0 after:w-px after:rounded-full after:bg-[color-mix(in_oklab,var(--ai)_65%,transparent)] after:opacity-70"
+        "relative max-w-[min(92%,38rem)] rounded-2xl",
+        "bg-[var(--panel-2)]"
       )}
     >
       <div
@@ -141,7 +86,7 @@ export function Bubble({ role, text, meta, onRegenerate, onFollowup }: Props) {
           "whitespace-pre-wrap break-words text-[15px] leading-[1.65] text-[var(--text)]",
           "[&_p]:m-0 [&_p+p]:mt-2.5",
           "[&_strong]:font-semibold [&_strong]:text-[var(--text)]",
-          "[&_code]:rounded-md [&_code]:border [&_code]:border-[var(--stroke)]/80 [&_code]:bg-[color-mix(in_oklab,var(--bg)_55%,black_35%)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[13px]",
+          "[&_code]:rounded-[5px] [&_code]:bg-white/[0.07] [&_code]:px-[5px] [&_code]:py-[1.5px] [&_code]:font-mono [&_code]:text-[0.92em]",
           "[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-[1.2em]",
           "[&_li]:mt-1"
         )}
@@ -153,16 +98,10 @@ export function Bubble({ role, text, meta, onRegenerate, onFollowup }: Props) {
   // Assistant block — left accent rail + clean card
   const assistantBlock = (
     <div className="max-w-[860px] flex-1">
-      <div
-        className={cn(
-          "relative rounded-[16px] border border-[var(--stroke)] bg-[var(--panel)]/60 px-4 py-4 ring-inset-soft",
-          "before:absolute before:left-0 before:top-3 before:bottom-3 before:w-[2px] before:rounded-full before:bg-gradient-to-b before:from-[var(--accent)] before:to-[var(--accent-2)]"
-        )}
-      >
-        {content}
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <Chip
+      <div className="relative px-1 py-2">{content}</div>
+      <div className="mt-1.5 flex items-center gap-0.5 px-1">
+        <IconAction
+          label={copied ? "Copied" : "Copy"}
           onClick={async () => {
             try {
               await navigator.clipboard.writeText(text);
@@ -173,43 +112,43 @@ export function Bubble({ role, text, meta, onRegenerate, onFollowup }: Props) {
               show("Copy failed.");
             }
           }}
-          title="Copy"
+          active={copied}
         >
-          {copied ? <Check size={12} /> : <CopyIcon size={12} />}
-          {copied ? "Copied" : "Copy"}
-        </Chip>
-        <Chip
+          {copied ? <Check size={15} strokeWidth={2.25} /> : <CopyIcon size={15} strokeWidth={2} />}
+        </IconAction>
+        <IconAction
+          label="Good response"
           onClick={() => {
             setFeedback("like");
             show("Thanks for the feedback.");
           }}
           active={feedback === "like"}
-          title="Like"
+          tone="accent"
         >
-          <ThumbsUp size={12} /> Like
-        </Chip>
-        <Chip
+          <ThumbsUp size={15} strokeWidth={2} />
+        </IconAction>
+        <IconAction
+          label="Bad response"
           onClick={() => {
             setFeedback("dislike");
             show("Got it — I'll improve.");
           }}
           active={feedback === "dislike"}
-          title="Dislike"
         >
-          <ThumbsDown size={12} /> Dislike
-        </Chip>
+          <ThumbsDown size={15} strokeWidth={2} />
+        </IconAction>
         {onRegenerate && (
-          <Chip onClick={onRegenerate} title="Regenerate">
-            <RotateCw size={12} /> Regenerate
-          </Chip>
+          <IconAction label="Regenerate" onClick={onRegenerate}>
+            <RotateCw size={15} strokeWidth={2} />
+          </IconAction>
         )}
         {onFollowup && (
-          <Chip onClick={onFollowup} title="Ask a follow-up">
-            <Reply size={12} /> Follow-up
-          </Chip>
+          <IconAction label="Reply / follow-up" onClick={onFollowup}>
+            <Reply size={15} strokeWidth={2} />
+          </IconAction>
         )}
         {meta && (
-          <span className="num ml-auto font-mono text-[11px] text-[var(--muted-3)]">
+          <span className="num ml-auto font-mono text-[10.5px] text-[var(--muted-3)]">
             {meta}
           </span>
         )}
@@ -229,13 +168,11 @@ export function Bubble({ role, text, meta, onRegenerate, onFollowup }: Props) {
           : { type: "spring", stiffness: 440, damping: 32 }
       }
       className={cn(
-        "mx-auto flex w-full max-w-[920px] items-start gap-3 px-2",
+        "mx-auto flex w-full max-w-[920px] items-start px-2",
         isAssistant ? "justify-start" : "justify-end"
       )}
     >
-      {isAssistant && <Avatar role="assistant" />}
       {isAssistant ? assistantBlock : userBubble}
-      {!isAssistant && <Avatar role="user" />}
     </motion.div>
   );
 }

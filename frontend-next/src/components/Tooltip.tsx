@@ -16,6 +16,7 @@ export function Tooltip({
   placement?: Placement;
   delay?: number;
 }) {
+  if (!label) return <>{children}</>;
   const [open, setOpen] = useState(false);
   const t = useRef<ReturnType<typeof setTimeout> | null>(null);
 

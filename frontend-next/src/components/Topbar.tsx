@@ -98,23 +98,6 @@ export function Topbar({
             </button>
           </Tooltip>
         )}
-
-        {inConversation && (
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--muted-3)]">
-                Conversation
-              </div>
-            </div>
-            <div
-              className="mt-0.5 truncate text-[15px] font-bold leading-tight"
-              style={{ maxWidth: "44vw", fontFamily: "var(--font-display)" }}
-            >
-              {title || "Untitled"}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="flex items-center gap-1">

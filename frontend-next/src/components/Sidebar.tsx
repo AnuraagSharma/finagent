@@ -93,21 +93,19 @@ export function Sidebar({
         "motion-reduce:!transition-none motion-reduce:!duration-0 transition-[border-color,box-shadow] duration-300 ease-out"
       )}
     >
-      {/* Brand row — min height on large screens so stacked vs row brand does not shift New Chat / nav */}
-      <div className="flex w-full min-w-0 items-stretch px-3.5 pb-5 pt-4 lg:min-h-[7.125rem]">
-        {/* Plain button + no Tooltip — avoids hover tooltips / motion press on sidebar chrome */}
+      {/* Brand row — fixed height so toggling never shifts the nav stack */}
+      <div className="relative flex h-[72px] w-full min-w-0 items-center px-3.5">
+        {/* Brand click area (kept stable) */}
         <button
           type="button"
           onClick={onToggleCollapsed}
+          onMouseDown={(e) => e.preventDefault()}
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand sidebar" : collapseLabel}
           className={cn(
-            // No border / ring-offset — avoids a visible “square box” during collapse animations
-            "relative flex h-full min-h-[3.125rem] w-full shrink-0 bg-transparent text-left shadow-none outline-none ring-0 ring-offset-0",
-            "focus-visible:outline-none focus-visible:ring-0",
-            collapsed
-              ? "flex-col items-center justify-center gap-1 rounded-full px-0 py-2"
-              : "min-w-0 flex-row items-center gap-2 rounded-[14px] px-1 py-1 pr-2"
+            "flex min-w-0 items-center gap-2 rounded-[14px] px-1 py-1 pr-2",
+            "bg-transparent text-left shadow-none outline-none ring-0 ring-offset-0",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/25 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]"
           )}
         >
           <span
@@ -120,52 +118,28 @@ export function Sidebar({
           >
             <BrandMark size={17} />
           </span>
-          <AnimatePresence mode="wait" initial={false}>
-            {collapsed ? (
-              <motion.div
-                key="collapse-chev"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.12, ease: "easeOut" }}
-                className="flex justify-center"
+
+          {/* Title block: fades in/out but does not change header height */}
+          <AnimatePresence initial={false}>
+            {!collapsed && (
+              <motion.span
+                key="brand-text"
+                initial={{ opacity: 0, x: -6 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -6 }}
+                transition={{ duration: 0.14, ease: "easeOut" }}
+                className="flex min-w-0 flex-1 flex-col overflow-hidden leading-tight"
               >
-                <ChevronLeft
-                  size={13}
-                  strokeWidth={2.75}
-                  className="text-[var(--accent)] opacity-95"
-                  style={{ transform: "rotate(180deg)" }}
-                  aria-hidden
-                />
-              </motion.div>
-            ) : (
-              <motion.div
-                key="expanded-brand"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.12, ease: "easeOut" }}
-                className="flex min-w-0 flex-1 flex-row items-center gap-2 pr-0.5"
-              >
-                <span className="flex min-w-0 flex-1 flex-col overflow-hidden leading-tight">
-                  <span
-                    className="text-[16.5px] font-extrabold tracking-[-0.01em] text-[var(--text)]"
-                    style={{ fontFamily: "var(--font-display)" }}
-                  >
-                    FinAgent
-                  </span>
-                  <span className="mt-0.5 truncate text-[9.5px] font-bold tracking-[0.22em] text-[var(--muted-2)]">
-                    DEEP RESEARCH
-                  </span>
+                <span
+                  className="text-[16.5px] font-extrabold tracking-[-0.01em] text-[var(--text)]"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  FinAgent
                 </span>
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[var(--muted-3)]">
-                  <ChevronLeft
-                    size={16}
-                    strokeWidth={2.75}
-                    aria-hidden
-                  />
+                <span className="mt-0.5 truncate text-[9.5px] font-bold tracking-[0.22em] text-[var(--muted-2)]">
+                  DEEP RESEARCH
                 </span>
-              </motion.div>
+              </motion.span>
             )}
           </AnimatePresence>
         </button>
@@ -183,20 +157,20 @@ export function Sidebar({
           {/* New Chat */}
           {/* New Chat — locked row height so + control doesn’t jog vs expanded */}
           <div className="flex min-h-9 items-center px-3.5 pb-4">
-            {collapsed ? (
+            <Tooltip label={collapsed ? "New chat" : ""}>
               <button
                 type="button"
                 onClick={onNewChat}
-                className="grid h-9 w-10 place-items-center rounded-md text-[var(--muted-2)] [contain:paint] transition-none hover:bg-white/[0.04] hover:text-[var(--text)]"
+                onMouseDown={(e) => e.preventDefault()}
                 aria-label="New chat"
-              >
-                <Plus size={16} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={onNewChat}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-[10px] border border-transparent px-2.5 py-2 text-left text-[13.5px] font-semibold text-[var(--muted)] transition-colors hover:border-[var(--stroke)] hover:bg-white/[0.04] hover:text-[var(--text)]"
+                className={cn(
+                  "flex min-h-9 w-full items-center gap-2.5 rounded-[12px] px-2.5 py-2",
+                  collapsed && "mx-auto w-10 justify-center px-0",
+                  "text-left text-[13.5px] font-semibold text-[var(--muted)]",
+                  "transition-colors hover:bg-white/[0.04] hover:text-[var(--text)]",
+                  // Avoid the “square glitz” on click/focus while still being keyboard-safe elsewhere.
+                  "outline-none focus:outline-none focus-visible:ring-0 focus-visible:outline-none"
+                )}
               >
                 <span className="grid w-5 shrink-0 place-items-center text-[var(--muted-2)]">
                   <span
@@ -210,9 +184,11 @@ export function Sidebar({
                     <Plus size={13} strokeWidth={3} />
                   </span>
                 </span>
-                <span className="min-w-0 flex-1">New Chat</span>
+                <span className={cn("min-w-0 flex-1 sb-text-fade", collapsed && "hidden")}>
+                  New Chat
+                </span>
               </button>
-            )}
+            </Tooltip>
           </div>
 
           {/* Nav */}
@@ -381,31 +357,28 @@ function NavItem({
   onClick: () => void;
   collapsed: boolean;
 }) {
-  if (collapsed) {
-    return (
-      <Tooltip label={label}>
-        <button
-          type="button"
-          onClick={onClick}
-          aria-label={label}
-          className="grid h-9 w-10 place-items-center rounded-md text-[var(--muted-2)] hover:bg-white/[0.04] hover:text-[var(--text)]"
-        >
-          {icon}
-        </button>
-      </Tooltip>
-    );
-  }
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex min-h-9 w-full items-center gap-2.5 rounded-[10px] border border-transparent px-2.5 py-2 text-[13.5px] text-[var(--muted)] transition-colors hover:border-[var(--stroke)] hover:bg-white/[0.04] hover:text-[var(--text)]"
-    >
-      <span className="grid w-5 place-items-center text-[var(--muted-2)]">
-        {icon}
-      </span>
-      <span className="flex-1 text-left">{label}</span>
-      {right}
-    </button>
+    <Tooltip label={collapsed ? label : ""}>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={label}
+        onMouseDown={(e) => e.preventDefault()}
+        className={cn(
+          "flex min-h-9 w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2",
+          collapsed && "mx-auto w-10 justify-center px-0",
+          "text-[13.5px] text-[var(--muted)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text)]",
+          "outline-none focus:outline-none focus-visible:ring-0 focus-visible:outline-none"
+        )}
+      >
+        <span className="grid w-5 shrink-0 place-items-center text-[var(--muted-2)]">
+          {icon}
+        </span>
+        <span className={cn("flex-1 text-left sb-text-fade", collapsed && "hidden")}>
+          {label}
+        </span>
+        {!collapsed && right}
+      </button>
+    </Tooltip>
   );
 }

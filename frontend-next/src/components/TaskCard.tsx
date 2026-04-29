@@ -90,12 +90,11 @@ export function TaskCard({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -4, scale: 0.985 }}
           transition={{ duration: 0.32, ease: [0.2, 0.7, 0.2, 1] }}
-          className="mx-auto flex w-full max-w-[920px] items-start gap-3 px-2"
+          className="mx-auto flex w-full max-w-[920px] items-start px-2"
           aria-busy={!done}
           role="status"
           aria-live="polite"
         >
-          <span className="h-8 w-8 shrink-0" aria-hidden />
           <div className="min-w-0 flex-1 max-w-[860px]">
           <div
             className={cn(

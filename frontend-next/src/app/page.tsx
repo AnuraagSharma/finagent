@@ -24,6 +24,7 @@ import { FeedbackView } from "@/components/FeedbackView";
 import { MobileDrawer } from "@/components/MobileDrawer";
 import { CommandPalette } from "@/components/CommandPalette";
 import { useToast } from "@/components/Toaster";
+import { cn } from "@/lib/cn";
 import { useRecents, useSettings } from "@/lib/stores";
 import {
   clearStoredActiveSession,
@@ -559,10 +560,19 @@ export default function Home() {
                 exit={{ opacity: 0, y: 8 }}
                 transition={{ duration: 0.18 }}
                 onClick={() => scrollToBottom(true)}
-                className="absolute bottom-[124px] right-4 z-[30] grid h-10 w-10 place-items-center rounded-full border border-[var(--stroke-2)] bg-[var(--glass-2)] shadow-[var(--shadow-2)] backdrop-blur-md hover:bg-white/[0.08] max-sm:right-5 max-sm:bottom-[128px]"
+                className={cn(
+                  "absolute bottom-[124px] right-4 z-[30] grid h-10 w-10 place-items-center rounded-full",
+                  "border border-[var(--stroke-2)] bg-[var(--glass-2)]/90 backdrop-blur-md",
+                  "shadow-[0_10px_26px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.12)]",
+                  "text-[var(--muted)] hover:text-[var(--text)] hover:bg-white/[0.08]",
+                  "transition-[transform,box-shadow,background-color,color] duration-150 ease-out",
+                  "hover:-translate-y-0.5 active:translate-y-0",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]",
+                  "max-sm:right-5 max-sm:bottom-[128px]"
+                )}
                 aria-label="Scroll to bottom"
               >
-                <ArrowDown size={15} />
+                <ArrowDown size={16} strokeWidth={2.4} />
               </motion.button>
             )}
           </AnimatePresence>
