@@ -31,7 +31,25 @@
   --gain-soft: rgba(16, 185, 129, 0.14);
   --loss: #f43f5e;
   --loss-soft: rgba(244, 63, 94, 0.14);
+  --warn: #f59e0b;
+  --warn-soft: rgba(245, 158, 11, 0.14);
   --neutral: #94a3b8;
+  --neutral-soft: rgba(148, 163, 184, 0.14);
+
+  /* Theme-aware hover overlay (subtle on both themes) */
+  --hover-soft: rgba(255, 255, 255, 0.05);
+  --hover-stronger: rgba(255, 255, 255, 0.08);
+
+  /* Chart palette — semantic, derived from accent + ai */
+  --chart-1: #34d399; /* primary  — emerald */
+  --chart-2: #818cf8; /* secondary — indigo */
+  --chart-3: #f59e0b; /* warn    — amber */
+  --chart-4: #f43f5e; /* danger  — rose */
+  --chart-5: #60a5fa; /* tool    — sky */
+  --chart-6: #a78bfa; /* accent  — violet */
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-axis: rgba(255, 255, 255, 0.45);
+  --chart-axis-strong: rgba(255, 255, 255, 0.66);
 
   /* Per-step colors (used in TaskCard chips) */
   --tool: #60a5fa;
@@ -97,7 +115,23 @@
   --gain-soft: rgba(5, 150, 105, 0.10);
   --loss: #e11d48;
   --loss-soft: rgba(225, 29, 72, 0.09);
+  --warn: #d97706;
+  --warn-soft: rgba(217, 119, 6, 0.10);
   --neutral: #64748b;
+  --neutral-soft: rgba(100, 116, 139, 0.10);
+
+  --hover-soft: rgba(15, 23, 42, 0.05);
+  --hover-stronger: rgba(15, 23, 42, 0.08);
+
+  --chart-1: #059669;
+  --chart-2: #6366f1;
+  --chart-3: #d97706;
+  --chart-4: #e11d48;
+  --chart-5: #2563eb;
+  --chart-6: #7c3aed;
+  --chart-grid: rgba(15, 23, 42, 0.07);
+  --chart-axis: rgba(15, 23, 42, 0.55);
+  --chart-axis-strong: rgba(15, 23, 42, 0.78);
 
   --tool: #2563eb;
   --tool-soft: rgba(37, 99, 235, 0.09);

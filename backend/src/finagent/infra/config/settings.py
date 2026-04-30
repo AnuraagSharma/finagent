@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -9,6 +9,10 @@ class Settings:
 
     openai_model: str = "openai:gpt-5.4"
     cors_allow_origins: tuple[str, ...] = ()
+    # Empty tuple = "open to everyone" (demo mode). Populating this from ADMIN_USER_IDS env locks
+    # /v1/analytics/* (and later /v1/knowledge/*) down to those users, with no UI/code changes
+    # needed elsewhere.
+    admin_user_ids: tuple[str, ...] = field(default_factory=tuple)
 
 
 def get_settings() -> Settings:
@@ -43,11 +47,12 @@ def get_settings() -> Settings:
 
     openai_model = os.getenv("OPENAI_MODEL", "openai:gpt-5.4").strip() or "openai:gpt-5.4"
     cors_allow_origins = _split_csv(os.getenv("CORS_ALLOW_ORIGINS", ""))
+    admin_user_ids = _split_csv(os.getenv("ADMIN_USER_IDS", ""))
 
     return Settings(
         database_url=database_url,
         redis_url=redis_url,
         openai_model=openai_model,
         cors_allow_origins=cors_allow_origins,
+        admin_user_ids=admin_user_ids,
     )
-

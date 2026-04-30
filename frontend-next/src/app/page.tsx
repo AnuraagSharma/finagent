@@ -19,7 +19,6 @@ import { StreamingBubble } from "@/components/StreamingBubble";
 import { TaskCard, type TaskStep } from "@/components/TaskCard";
 import { Sheet } from "@/components/Sheet";
 import { SettingsModal } from "@/components/SettingsModal";
-import { AnalyticsView } from "@/components/AnalyticsView";
 import { FeedbackView } from "@/components/FeedbackView";
 import { MobileDrawer } from "@/components/MobileDrawer";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -83,7 +82,6 @@ export default function Home() {
   }, [todos]);
 
   // Sheets / modals
-  const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -552,7 +550,6 @@ export default function Home() {
           inConversation={transcript.length > 0 || taskVisible || streaming}
           onMenu={() => setDrawerOpen(true)}
           onHome={newChat}
-          onAnalytics={() => setAnalyticsOpen(true)}
           onFeedback={() => setFeedbackOpen(true)}
           onClear={newChat}
           onExport={exportChat}
@@ -639,20 +636,6 @@ export default function Home() {
         </section>
       </motion.main>
 
-      {/* Sheets */}
-      <Sheet
-        open={analyticsOpen}
-        title="Analytics"
-        onClose={() => setAnalyticsOpen(false)}
-      >
-        <AnalyticsView
-          transcript={transcript}
-          onResume={(id, t) => {
-            setAnalyticsOpen(false);
-            resumeThread(id, t);
-          }}
-        />
-      </Sheet>
       <Sheet
         open={feedbackOpen}
         title="Feedback"

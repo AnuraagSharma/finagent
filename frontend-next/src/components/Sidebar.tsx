@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BarChart3,
   Compass,
   LayoutGrid,
   LibraryBig,
@@ -10,6 +11,8 @@ import {
   ChevronLeft,
   Trash2,
 } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useMemo } from "react";
 import { useRecents } from "@/lib/stores";
 import { cn } from "@/lib/cn";
@@ -80,6 +83,7 @@ export function Sidebar({
 }: Props) {
   const { recents, remove } = useRecents();
   const groups = useMemo(() => groupRecentsByTime(recents), [recents]);
+  const pathname = usePathname();
 
   const collapseLabel =
     brandToggleDismissesOverlay === true ? "Close menu" : "Collapse sidebar";
@@ -216,6 +220,13 @@ export function Sidebar({
             />
             <NavItem
               collapsed={collapsed}
+              icon={<BarChart3 size={15} />}
+              label="Analytics"
+              href="/analytics"
+              active={pathname?.startsWith("/analytics")}
+            />
+            <NavItem
+              collapsed={collapsed}
               icon={<SettingsIcon size={15} />}
               label="Settings"
               onClick={onOpenSettings}
@@ -339,13 +350,54 @@ function NavItem({
   right,
   onClick,
   collapsed,
+  href,
+  active,
 }: {
   icon: React.ReactNode;
   label: string;
   right?: React.ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   collapsed: boolean;
+  /** When set, renders as a Next.js Link instead of a button. */
+  href?: string;
+  active?: boolean;
 }) {
+  const baseClass = cn(
+    // Layout is FIXED; collapsed-state visibility is purely opacity
+    // driven by sb-text-fade. Wrapper clips the right side at 72px.
+    "flex min-h-9 w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2",
+    "text-[13.5px] transition-colors",
+    active
+      ? "bg-[var(--accent-soft)] text-[var(--text)]"
+      : "text-[var(--muted)] hover:bg-white/[0.04] hover:text-[var(--text)]",
+    "outline-none focus:outline-none focus-visible:ring-0 focus-visible:outline-none"
+  );
+
+  const inner = (
+    <>
+      <span
+        className={cn(
+          "grid w-5 shrink-0 place-items-center",
+          active ? "text-[var(--accent)]" : "text-[var(--muted-2)]"
+        )}
+      >
+        {icon}
+      </span>
+      <span className="flex-1 text-left sb-text-fade">{label}</span>
+      {right && <span className="sb-text-fade">{right}</span>}
+    </>
+  );
+
+  if (href) {
+    return (
+      <Tooltip label={collapsed ? label : ""}>
+        <Link href={href} aria-label={label} className={baseClass}>
+          {inner}
+        </Link>
+      </Tooltip>
+    );
+  }
+
   return (
     <Tooltip label={collapsed ? label : ""}>
       <button
@@ -353,19 +405,9 @@ function NavItem({
         onClick={onClick}
         aria-label={label}
         onMouseDown={(e) => e.preventDefault()}
-        className={cn(
-          // Layout is FIXED; collapsed-state visibility is purely opacity
-          // driven by sb-text-fade. Wrapper clips the right side at 72px.
-          "flex min-h-9 w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2",
-          "text-[13.5px] text-[var(--muted)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text)]",
-          "outline-none focus:outline-none focus-visible:ring-0 focus-visible:outline-none"
-        )}
+        className={baseClass}
       >
-        <span className="grid w-5 shrink-0 place-items-center text-[var(--muted-2)]">
-          {icon}
-        </span>
-        <span className="flex-1 text-left sb-text-fade">{label}</span>
-        {right && <span className="sb-text-fade">{right}</span>}
+        {inner}
       </button>
     </Tooltip>
   );

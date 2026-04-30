@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -15,10 +16,35 @@ from finagent.agent.deepagent.agent import build_fin_deep_agent
 from finagent.api.dependencies.auth import get_user_id_from_headers
 from finagent.db.models import AgentInteraction
 from finagent.db.postgres import session_scope
+from finagent.infra.config.pricing import compute_cost
 from finagent.infra.config.settings import get_settings
 
 
 router = APIRouter(prefix="/v1/agent", tags=["agent"])
+
+
+# Heuristic for "soft errors" — the assistant successfully streamed text but the answer
+# is effectively a refusal / "I couldn't" / "no data". Matches the leading sentence so we
+# don't flag answers that merely *contain* "couldn't" further in the body.
+_SOFT_ERROR_RE = re.compile(
+    r"^\s*(i\s+(?:couldn'?t|cannot|can'?t|was unable to|am unable to)|no data|unable to|sorry,? )",
+    re.IGNORECASE,
+)
+
+
+def _classify_status(text: str) -> str:
+    """Return 'success' | 'soft_error' for a completed (no-exception) turn."""
+    if not text or not text.strip():
+        # Empty/whitespace-only response also counts as soft error
+        return "soft_error"
+    return "soft_error" if _SOFT_ERROR_RE.match(text) else "success"
+
+
+def _short(s: str | None, n: int = 500) -> str | None:
+    if s is None:
+        return None
+    s = str(s)
+    return s if len(s) <= n else s[: n - 1] + "\u2026"
 
 
 class AgentRunRequest(BaseModel):
@@ -31,25 +57,40 @@ class AgentRunResponse(BaseModel):
     message: str
 
 
-def _extract_assistant_message(result: dict[str, Any]) -> str:
+def _extract_assistant_message_and_usage(result: dict[str, Any]) -> tuple[str, dict[str, int]]:
+    """Return (text, usage) where usage is {prompt_tokens, completion_tokens, total_tokens}."""
     messages = result.get("messages") or []
+    text = ""
+    usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     if not messages:
-        return ""
+        return text, usage
+
     last = messages[-1]
     content = getattr(last, "content", None)
     if content is None and isinstance(last, dict):
         content = last.get("content", "")
     if isinstance(content, str):
-        return content
-    # Deep Agents often returns a list of blocks; extract text blocks if present.
-    if isinstance(content, list):
-        texts: list[str] = []
+        text = content
+    elif isinstance(content, list):
+        parts: list[str] = []
         for b in content:
             if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str):
-                texts.append(b["text"])
-        if texts:
-            return "\n".join(texts).strip()
-    return str(content)
+                parts.append(b["text"])
+        text = "\n".join(parts).strip() if parts else str(content)
+    else:
+        text = str(content) if content is not None else ""
+
+    # Sum usage_metadata across all AI messages produced this turn — the supervisor +
+    # any subagent calls. Skipping non-AI messages (tool/system/human) prevents double-count.
+    for msg in messages:
+        meta = getattr(msg, "usage_metadata", None)
+        if not isinstance(meta, dict):
+            continue
+        usage["prompt_tokens"] += int(meta.get("input_tokens") or 0)
+        usage["completion_tokens"] += int(meta.get("output_tokens") or 0)
+        usage["total_tokens"] += int(meta.get("total_tokens") or 0)
+
+    return text, usage
 
 
 @router.post("/run", response_model=AgentRunResponse)
@@ -58,45 +99,125 @@ def run_agent(
     user_id: str = Depends(get_user_id_from_headers),
 ) -> AgentRunResponse:
     settings = get_settings()
-
     thread_id = body.thread_id or str(uuid.uuid4())
-
     agent = build_fin_deep_agent(redis_url=settings.redis_url, model=settings.openai_model)
 
     started = time.perf_counter()
+    status = "success"
+    error_type: str | None = None
+    error_detail: str | None = None
+    assistant_message = ""
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
     try:
         result = agent.invoke(
-            {
-                "messages": [{"role": "user", "content": body.message}],
-            },
+            {"messages": [{"role": "user", "content": body.message}]},
             config={
                 "configurable": {"thread_id": thread_id},
                 "context": {"user_id": user_id},
             },
         )
+        assistant_message, usage = _extract_assistant_message_and_usage(result)
+        status = _classify_status(assistant_message)
+        if status == "soft_error":
+            error_type = "soft_refusal"
+            error_detail = _short(assistant_message, 500)
     except Exception as e:
-        # Surface the underlying error to help with early integration
-        raise HTTPException(status_code=500, detail=str(e)) from e
-    latency_ms = (time.perf_counter() - started) * 1000.0
-
-    assistant_message = _extract_assistant_message(result)
-
-    # Persist interaction for analytics dashboard
-    from finagent.api.main import session_factory  # local import to avoid circulars
-
-    with session_scope(session_factory) as session:
-        session.add(
-            AgentInteraction(
-                user_id=user_id,
-                thread_id=thread_id,
-                user_message=body.message,
-                assistant_message=assistant_message,
-                latency_ms=latency_ms,
-                model=settings.openai_model,
-            )
+        status = "hard_error"
+        error_type = type(e).__name__
+        error_detail = _short(str(e), 500)
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        _persist_interaction(
+            user_id=user_id,
+            thread_id=thread_id,
+            user_message=body.message,
+            assistant_message="",
+            latency_ms=latency_ms,
+            model=settings.openai_model,
+            usage=usage,
+            llm_ms=None,
+            exec_ms=None,
+            step_count=None,
+            tool_count=None,
+            status=status,
+            error_type=error_type,
+            error_detail=error_detail,
         )
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    latency_ms = (time.perf_counter() - started) * 1000.0
+    _persist_interaction(
+        user_id=user_id,
+        thread_id=thread_id,
+        user_message=body.message,
+        assistant_message=assistant_message,
+        latency_ms=latency_ms,
+        model=settings.openai_model,
+        usage=usage,
+        llm_ms=None,  # /run path is non-streamed — no clean way to split
+        exec_ms=None,
+        step_count=None,
+        tool_count=None,
+        status=status,
+        error_type=error_type,
+        error_detail=error_detail,
+    )
 
     return AgentRunResponse(thread_id=thread_id, message=assistant_message)
+
+
+def _persist_interaction(
+    *,
+    user_id: str,
+    thread_id: str,
+    user_message: str,
+    assistant_message: str,
+    latency_ms: float,
+    model: str,
+    usage: dict[str, int],
+    llm_ms: float | None,
+    exec_ms: float | None,
+    step_count: int | None,
+    tool_count: int | None,
+    status: str,
+    error_type: str | None,
+    error_detail: str | None,
+) -> None:
+    """Best-effort write of a turn into agent_interactions. Never raises — analytics
+    persistence must not fail user requests."""
+    from finagent.api.main import session_factory  # local import to avoid circulars
+
+    pt = usage.get("prompt_tokens") or 0
+    ct = usage.get("completion_tokens") or 0
+    tt = usage.get("total_tokens") or (pt + ct) or None
+    cost = compute_cost(model, pt or None, ct or None)
+
+    try:
+        with session_scope(session_factory) as session:
+            session.add(
+                AgentInteraction(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    latency_ms=latency_ms,
+                    model=model,
+                    prompt_tokens=pt or None,
+                    completion_tokens=ct or None,
+                    total_tokens=tt,
+                    cost_usd=cost,
+                    llm_ms=llm_ms,
+                    exec_ms=exec_ms,
+                    step_count=step_count,
+                    tool_count=tool_count,
+                    status=status,
+                    error_type=error_type,
+                    error_detail=error_detail,
+                )
+            )
+    except Exception:
+        # Analytics is best-effort — never let DB hiccups break the user-facing flow.
+        pass
 
 
 class ThreadMessage(BaseModel):
@@ -154,7 +275,6 @@ def get_thread(
             if text:
                 messages_out.append(ThreadMessage(role="user", text=text))
         elif mtype == "ai":
-            # Skip pure tool-call AI messages (no surface text)
             text = _msg_text(m)
             if text:
                 messages_out.append(ThreadMessage(role="assistant", text=text))
@@ -183,6 +303,18 @@ def _chunk_text(chunk: Any) -> str:
     return ""
 
 
+def _chunk_usage(chunk: Any) -> dict[str, int] | None:
+    """Pull usage_metadata off a streaming chunk if present."""
+    meta = getattr(chunk, "usage_metadata", None)
+    if not isinstance(meta, dict):
+        return None
+    return {
+        "prompt_tokens": int(meta.get("input_tokens") or 0),
+        "completion_tokens": int(meta.get("output_tokens") or 0),
+        "total_tokens": int(meta.get("total_tokens") or 0),
+    }
+
+
 def _advance_stream_iter(sync_it: Iterator[Any]) -> tuple[Any, bool]:
     """Run next() in a thread-friendly wrapper; returns (item, finished)."""
     try:
@@ -205,6 +337,24 @@ async def stream_agent(
         started = time.perf_counter()
         full_text_parts: list[str] = []
         inflight_tools: dict[str, str] = {}
+        # Time-split accounting: every iteration of the stream we attribute its wall-clock cost
+        # to either the LLM bucket (a `messages` chunk produced text) or the exec bucket
+        # (a `tool` message arrived). Anything else falls into "neither" (overhead).
+        llm_ms_total = 0.0
+        exec_ms_total = 0.0
+        step_count = 0
+        tool_count = 0
+        # We sum usage from all `messages` chunks we observe. Some providers emit usage only
+        # on the final chunk; either way summing yields the right total per turn.
+        usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        # `last_tick` is the wall-clock time of the previous yielded item so we can attribute
+        # the gap before *this* item arrived to whichever bucket it belongs to.
+        last_tick = time.perf_counter()
+
+        status = "success"
+        error_type: str | None = None
+        error_detail: str | None = None
+
         yield _sse({"type": "start", "thread_id": thread_id})
         try:
             stream = agent.stream(
@@ -225,6 +375,10 @@ async def stream_agent(
                 if await request.is_disconnected():
                     return
 
+                now = time.perf_counter()
+                elapsed = (now - last_tick) * 1000.0
+                last_tick = now
+
                 if isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str):
                     mode, payload = item
                 else:
@@ -236,6 +390,20 @@ async def stream_agent(
                     else:
                         chunk, metadata = payload, {}
                     node = (metadata or {}).get("langgraph_node") if isinstance(metadata, dict) else None
+
+                    # Attribute time: tool nodes are exec, anything else is LLM.
+                    if node and "tool" in str(node).lower():
+                        exec_ms_total += elapsed
+                    else:
+                        llm_ms_total += elapsed
+
+                    # Always sum usage when present, even from tool-node messages (rare).
+                    chunk_usage = _chunk_usage(chunk)
+                    if chunk_usage:
+                        usage["prompt_tokens"] += chunk_usage["prompt_tokens"]
+                        usage["completion_tokens"] += chunk_usage["completion_tokens"]
+                        usage["total_tokens"] += chunk_usage["total_tokens"]
+
                     if node and "tool" in str(node).lower():
                         continue
                     text = _chunk_text(chunk)
@@ -245,6 +413,9 @@ async def stream_agent(
                     yield _sse({"type": "token", "text": text})
 
                 elif mode == "updates":
+                    # `updates` events carry tool-call lifecycle, not LLM tokens. Bucket them as exec.
+                    exec_ms_total += elapsed
+
                     if not isinstance(payload, dict):
                         continue
                     for node_name, update in payload.items():
@@ -269,6 +440,9 @@ async def stream_agent(
                                         continue
                                     inflight_tools[str(tid)] = str(tname)
                                     kind = "subagent" if tname == "task" else "tool"
+                                    step_count += 1
+                                    if kind == "tool":
+                                        tool_count += 1
                                     yield _sse(
                                         {
                                             "type": "step",
@@ -279,6 +453,14 @@ async def stream_agent(
                                             "node": node_name,
                                         }
                                     )
+
+                            # Also collect usage from non-streamed AI messages that surface only
+                            # via `updates` (some providers don't emit per-token chunks).
+                            ai_usage = _chunk_usage(msg)
+                            if ai_usage:
+                                usage["prompt_tokens"] += ai_usage["prompt_tokens"]
+                                usage["completion_tokens"] += ai_usage["completion_tokens"]
+                                usage["total_tokens"] += ai_usage["total_tokens"]
 
                             msg_type = getattr(msg, "type", None)
                             if msg_type == "tool":
@@ -318,26 +500,51 @@ async def stream_agent(
 
             full_text = "".join(full_text_parts).strip()
             latency_ms = (time.perf_counter() - started) * 1000.0
+            status = _classify_status(full_text)
+            if status == "soft_error":
+                error_type = "soft_refusal"
+                error_detail = _short(full_text, 500)
 
-            try:
-                from finagent.api.main import session_factory
-
-                with session_scope(session_factory) as session:
-                    session.add(
-                        AgentInteraction(
-                            user_id=user_id,
-                            thread_id=thread_id,
-                            user_message=body.message,
-                            assistant_message=full_text,
-                            latency_ms=latency_ms,
-                            model=settings.openai_model,
-                        )
-                    )
-            except Exception:
-                pass
+            _persist_interaction(
+                user_id=user_id,
+                thread_id=thread_id,
+                user_message=body.message,
+                assistant_message=full_text,
+                latency_ms=latency_ms,
+                model=settings.openai_model,
+                usage=usage,
+                llm_ms=round(llm_ms_total, 2) if llm_ms_total > 0 else None,
+                exec_ms=round(exec_ms_total, 2) if exec_ms_total > 0 else None,
+                step_count=step_count or None,
+                tool_count=tool_count or None,
+                status=status,
+                error_type=error_type,
+                error_detail=error_detail,
+            )
 
             yield _sse({"type": "done", "thread_id": thread_id, "ms": int(latency_ms)})
         except Exception as e:  # noqa: BLE001
+            latency_ms = (time.perf_counter() - started) * 1000.0
+            status = "hard_error"
+            error_type = type(e).__name__
+            error_detail = _short(str(e), 500)
+            full_text = "".join(full_text_parts).strip()
+            _persist_interaction(
+                user_id=user_id,
+                thread_id=thread_id,
+                user_message=body.message,
+                assistant_message=full_text,
+                latency_ms=latency_ms,
+                model=settings.openai_model,
+                usage=usage,
+                llm_ms=round(llm_ms_total, 2) if llm_ms_total > 0 else None,
+                exec_ms=round(exec_ms_total, 2) if exec_ms_total > 0 else None,
+                step_count=step_count or None,
+                tool_count=tool_count or None,
+                status=status,
+                error_type=error_type,
+                error_detail=error_detail,
+            )
             yield _sse({"type": "error", "message": str(e)})
 
     return StreamingResponse(
@@ -349,4 +556,3 @@ async def stream_agent(
             "Connection": "keep-alive",
         },
     )
-

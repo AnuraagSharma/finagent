@@ -3,8 +3,11 @@ from typing import Callable
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 
 from finagent.api.v1.routes.agent import router as agent_router
+from finagent.api.v1.routes.analytics import router as analytics_router
+from finagent.api.v1.routes.feedback import router as feedback_router
 from finagent.db.models import Base, ApiRequest
 from finagent.db.postgres import create_pg_engine, create_session_factory, session_scope
 from finagent.infra.config.settings import get_settings
@@ -27,9 +30,7 @@ _DEFAULT_DEV_ORIGINS = (
 
 app.add_middleware(
     CORSMiddleware,
-    # Explicit origins for the frontends we actually run.
     allow_origins=list(dict.fromkeys((*_DEFAULT_DEV_ORIGINS, *settings.cors_allow_origins))),
-    # Permissive regex so any localhost dev port (3000–8999) works without re-deploys.
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
@@ -38,10 +39,40 @@ app.add_middleware(
 )
 
 
+# Columns we may need to add to the existing agent_interactions table on demo databases
+# that pre-date the analytics work. `Base.metadata.create_all` won't add columns, so we
+# do a tiny idempotent ALTER TABLE here. Production setups should use Alembic instead.
+_AGENT_INTERACTIONS_NEW_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("prompt_tokens", "INTEGER"),
+    ("completion_tokens", "INTEGER"),
+    ("total_tokens", "INTEGER"),
+    ("cost_usd", "DOUBLE PRECISION"),
+    ("llm_ms", "DOUBLE PRECISION"),
+    ("exec_ms", "DOUBLE PRECISION"),
+    ("step_count", "INTEGER"),
+    ("tool_count", "INTEGER"),
+    ("status", "VARCHAR(16) DEFAULT 'success' NOT NULL"),
+    ("error_type", "VARCHAR(64)"),
+    ("error_detail", "TEXT"),
+)
+
+
+def _ensure_agent_interactions_columns() -> None:
+    inspector = inspect(engine)
+    if "agent_interactions" not in inspector.get_table_names():
+        return
+    existing = {c["name"] for c in inspector.get_columns("agent_interactions")}
+    with engine.begin() as conn:
+        for name, ddl in _AGENT_INTERACTIONS_NEW_COLUMNS:
+            if name in existing:
+                continue
+            conn.execute(text(f"ALTER TABLE agent_interactions ADD COLUMN IF NOT EXISTS {name} {ddl}"))
+
+
 @app.on_event("startup")
 def _startup() -> None:
-    # Demo-friendly: create tables automatically.
     Base.metadata.create_all(bind=engine)
+    _ensure_agent_interactions_columns()
 
 
 @app.middleware("http")
@@ -70,9 +101,10 @@ async def request_logging_middleware(request: Request, call_next: Callable[[Requ
 
 
 app.include_router(agent_router)
+app.include_router(analytics_router)
+app.include_router(feedback_router)
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
-

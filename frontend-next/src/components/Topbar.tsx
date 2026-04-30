@@ -13,6 +13,7 @@ import {
   Download,
   MessageSquare,
 } from "lucide-react";
+import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
@@ -24,7 +25,8 @@ type Props = {
   inConversation?: boolean;
   onMenu: () => void;
   onHome: () => void;
-  onAnalytics: () => void;
+  /** Optional: when omitted, the Analytics button navigates to /analytics via Link. */
+  onAnalytics?: () => void;
   onFeedback: () => void;
   onClear: () => void;
   onExport: () => void;
@@ -113,15 +115,26 @@ export function Topbar({
         </Tooltip>
 
         <Tooltip label="Analytics">
-          <button
-            type="button"
-            onClick={onAnalytics}
-            aria-label="Analytics"
-            className="hidden h-9 items-center gap-1.5 rounded-[10px] border border-[var(--stroke)] px-2.5 text-[13px] font-semibold text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)] md:inline-flex"
-          >
-            <BarChart3 size={13} />
-            Analytics
-          </button>
+          {onAnalytics ? (
+            <button
+              type="button"
+              onClick={onAnalytics}
+              aria-label="Analytics"
+              className="hidden h-9 items-center gap-1.5 rounded-[10px] border border-[var(--stroke)] px-2.5 text-[13px] font-semibold text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)] md:inline-flex"
+            >
+              <BarChart3 size={13} />
+              Analytics
+            </button>
+          ) : (
+            <Link
+              href="/analytics"
+              aria-label="Analytics"
+              className="hidden h-9 items-center gap-1.5 rounded-[10px] border border-[var(--stroke)] px-2.5 text-[13px] font-semibold text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)] md:inline-flex"
+            >
+              <BarChart3 size={13} />
+              Analytics
+            </Link>
+          )}
         </Tooltip>
 
         <Sep />
