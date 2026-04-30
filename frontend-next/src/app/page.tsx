@@ -33,7 +33,7 @@ import {
 } from "@/lib/activeSession";
 import { getThreadHistory, streamAgent } from "@/lib/api";
 import { useHotkey } from "@/lib/useHotkeys";
-import type { ChatMessage, StepEvent, TodoItem } from "@/lib/types";
+import type { ChatMessage, StepEvent, TodoItem, TurnSummary } from "@/lib/types";
 
 function prettyName(name: string) {
   return String(name || "step").replace(/[_-]+/g, " ");
@@ -72,6 +72,15 @@ export default function Home() {
   const streamEpochRef = useRef(0);
   /** Thread id for the in-flight streamed turn (continuation or backend start). */
   const streamThreadIdRef = useRef<string | null>(null);
+  /** Mirrors steps/todos so onDone (closure-captured) can snapshot the latest state for the bubble's persistent summary. */
+  const stepsRef = useRef<TaskStep[]>([]);
+  const todosRef = useRef<TodoItem[]>([]);
+  useEffect(() => {
+    stepsRef.current = steps;
+  }, [steps]);
+  useEffect(() => {
+    todosRef.current = todos;
+  }, [todos]);
 
   // Sheets / modals
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -257,10 +266,14 @@ export default function Home() {
     setTranscript((prev) => [...prev, { role: "user", text, ts: Date.now() }]);
   }
 
-  function pushAssistantFinal(text: string, meta?: string) {
+  function pushAssistantFinal(
+    text: string,
+    meta?: string,
+    summary?: TurnSummary
+  ) {
     setTranscript((prev) => [
       ...prev,
-      { role: "assistant", text, ts: Date.now() },
+      { role: "assistant", text, ts: Date.now(), summary },
     ]);
     setStreamingText("");
     setStreamingMeta(meta || null);
@@ -360,19 +373,28 @@ export default function Home() {
                   name: evt.name,
                   kind: (evt.kind || "tool") as TaskStep["kind"],
                   status: "started",
+                  startedAt: performance.now(),
                 },
               ];
             }
+            const completeAt = (s: TaskStep): TaskStep => ({
+              ...s,
+              status: "completed",
+              durationMs:
+                typeof s.startedAt === "number"
+                  ? Math.max(0, performance.now() - s.startedAt)
+                  : s.durationMs,
+            });
             const byId = prev.findIndex((s) => s.id === id);
             if (byId >= 0) {
               const next = prev.slice();
-              next[byId] = { ...next[byId], status: "completed" };
+              next[byId] = completeAt(next[byId]);
               return next;
             }
             for (let i = prev.length - 1; i >= 0; i--) {
               if (prev[i].name === evt.name && prev[i].status !== "completed") {
                 const next = prev.slice();
-                next[i] = { ...next[i], status: "completed" };
+                next[i] = completeAt(next[i]);
                 return next;
               }
             }
@@ -426,7 +448,28 @@ export default function Home() {
 
           const finalText = buffer || "(no response)";
           streamAccumRef.current = "";
-          pushAssistantFinal(finalText, `${thread_id} • ${took}ms`);
+
+          // Snapshot the live steps/todos onto the assistant message so the
+          // collapsed summary pill above the bubble can be re-expanded later.
+          // We strip the "client-*" bookkeeping rows so the summary only shows
+          // real agent work.
+          const realSteps = stepsRef.current.filter(
+            (s) => !s.id.startsWith("client-")
+          );
+          const summary: TurnSummary | undefined =
+            realSteps.length > 0 || todosRef.current.length > 0
+              ? {
+                  steps: realSteps.map((s) => ({
+                    id: s.id,
+                    name: s.name,
+                    kind: s.kind,
+                    durationMs: s.durationMs,
+                  })),
+                  todos: [...todosRef.current],
+                  ms: took,
+                }
+              : undefined;
+          pushAssistantFinal(finalText, `${thread_id} • ${took}ms`, summary);
 
           if (thread_id) {
             const titleMsg =
@@ -535,6 +578,7 @@ export default function Home() {
                       key={i}
                       role={m.role}
                       text={m.text}
+                      summary={m.summary}
                       onRegenerate={isLastAssistant ? regenerateLast : undefined}
                       onFollowup={isLastAssistant ? followupHint : undefined}
                     />

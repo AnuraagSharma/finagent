@@ -20,7 +20,17 @@ export type TaskStep = {
   name: string;
   kind: "tool" | "subagent" | "info";
   status: "started" | "completed";
+  /** performance.now() at "started" */
+  startedAt?: number;
+  /** ms duration once completed; rendered as a muted label when > 500ms */
+  durationMs?: number;
 };
+
+/** Format a duration in a way that reads naturally without being noisy. */
+function fmtDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+}
 
 const kindStyle = {
   tool: {
@@ -70,8 +80,8 @@ export function TaskCard({
     (t) => (t.status || "").toLowerCase() === "completed"
   ).length;
   const title = done
-    ? ms
-      ? `Finished in ${(ms / 1000).toFixed(1)}s`
+    ? ms != null
+      ? `Finished in ${fmtDuration(Math.max(ms, 100))}`
       : "Finished"
     : "Working";
 
@@ -105,7 +115,12 @@ export function TaskCard({
             <div className="flex items-center justify-between gap-3 border-b border-[var(--stroke)]/90 px-3.5 py-2.5">
               <div className="min-w-0 flex flex-1 flex-col gap-0.5">
                 <div className="flex items-center gap-2.5">
-                  <span
+                  {/*
+                    While running, the head badge breathes (scale + opacity loop)
+                    so the lead indicator feels alive — pairs with the shimmer
+                    progress bar and the per-step spinners below.
+                  */}
+                  <motion.span
                     className={cn(
                       "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
                       done
@@ -117,13 +132,31 @@ export function TaskCard({
                         ? { boxShadow: "0 4px 14px var(--accent-glow)" }
                         : undefined
                     }
+                    animate={
+                      done
+                        ? { scale: 1, opacity: 1 }
+                        : {
+                            scale: [1, 1.08, 1],
+                            opacity: [1, 0.78, 1],
+                            boxShadow: [
+                              "0 0 0 0 var(--accent-glow)",
+                              "0 0 0 6px transparent",
+                              "0 0 0 0 var(--accent-glow)",
+                            ],
+                          }
+                    }
+                    transition={
+                      done
+                        ? { duration: 0.25, ease: "easeOut" }
+                        : { duration: 1.6, repeat: Infinity, ease: "easeInOut" }
+                    }
                   >
                     {done ? (
                       <Check size={13} strokeWidth={2.75} />
                     ) : (
                       <Sparkles size={12} />
                     )}
-                  </span>
+                  </motion.span>
                   <span className="truncate text-[14px] font-semibold tracking-[-0.02em] text-[var(--text)]">
                     {title}
                   </span>
@@ -233,6 +266,18 @@ export function TaskCard({
                                 <KindIcon size={10} strokeWidth={2.25} />
                                 {kindLabel[s.kind]}
                               </span>
+                              {/*
+                                Only show a duration when it took >500ms — sub-second
+                                steps would just be noise. Mono font keeps it from
+                                pulling the eye away from the step name.
+                              */}
+                              {!active &&
+                                typeof s.durationMs === "number" &&
+                                s.durationMs > 500 && (
+                                  <span className="num font-mono text-[10.5px] tabular-nums text-[var(--muted-3)]">
+                                    {fmtDuration(s.durationMs)}
+                                  </span>
+                                )}
                             </div>
                           </div>
                         </motion.div>

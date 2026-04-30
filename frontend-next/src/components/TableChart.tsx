@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { cn } from "@/lib/cn";
+import { renderInline } from "./Markdown";
 
 export type ParsedTable = {
   headers: string[];
@@ -22,12 +23,36 @@ export type ParsedTable = {
 /* Try to parse a number out of "21.301", "$21.30bn", "+19.6%", "-8.7%". */
 function parseNumeric(s: string): number | null {
   if (s == null) return null;
-  const m = String(s).trim().match(/-?\d+(?:[.,]\d+)?/);
+  const t = String(s).trim();
+  if (!t) return null;
+
+  // Avoid mis-detecting label-like strings (e.g. "52-week range", "Revenue (TTM)")
+  // as numeric just because they contain digits.
+  const hasLetters = /[A-Za-z]/.test(t);
+  const looksNumericPrefix = /^[-+]?[\s]*([$€£₹]|USD|EUR|GBP|INR)?\s*\d/.test(t) || /^[-+]?\d/.test(t);
+  const hasPercent = /%/.test(t);
+  if (hasLetters && !looksNumericPrefix && !hasPercent) return null;
+
+  const m = t.match(/-?\d+(?:[.,]\d+)?/);
   if (!m) return null;
   const n = parseFloat(m[0].replace(",", "."));
   if (!isFinite(n)) return null;
   // If the original ends with %, keep raw value (caller may interpret).
   return n;
+}
+
+/**
+ * Strip inline markdown markers so the string can be used as plain text by
+ * recharts' axes / tooltips, which only accept text (not JSX). The table cells
+ * keep their bold/italic via renderInline; this is just for the chart pipeline.
+ */
+function stripMd(s: string): string {
+  return String(s ?? "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .trim();
 }
 
 function formatChartValue(n: number): string {
@@ -56,7 +81,8 @@ function ChartTooltipCard({
   const v =
     typeof raw === "number" ? raw : typeof raw === "string" ? parseFloat(raw) : Number.NaN;
 
-  const labelText = label != null && String(label).length ? String(label) : "—";
+  const labelText =
+    label != null && String(label).length ? stripMd(String(label)) : "—";
 
   return (
     <div
@@ -108,8 +134,10 @@ export function TableChart({ table }: { table: ParsedTable }) {
 
   const chartData = useMemo(() => {
     if (numericCol === null) return [];
+    // Strip inline markdown from the X-axis label — recharts can't render JSX
+    // into <text>, so any **bold**/`code` markers would show literally.
     return table.rows.map((row) => ({
-      label: row[labelCol] || "",
+      label: stripMd(row[labelCol] || ""),
       value: parseNumeric(row[numericCol]) ?? 0,
     }));
   }, [table, numericCol, labelCol]);
@@ -126,9 +154,9 @@ export function TableChart({ table }: { table: ParsedTable }) {
         {showChart && (
           <div className="text-[11px] text-[var(--muted-3)]">
             <span className="font-bold text-[var(--muted)]">
-              {table.headers[numericCol!]}
+              {stripMd(table.headers[numericCol!])}
             </span>{" "}
-            by {table.headers[labelCol]}
+            by {stripMd(table.headers[labelCol])}
           </div>
         )}
       </div>
@@ -148,7 +176,7 @@ export function TableChart({ table }: { table: ParsedTable }) {
                     table.aligns[i] === "left" && "text-left"
                   )}
                 >
-                  {h}
+                  {renderInline(h, `th-${i}`)}
                 </th>
               ))}
             </tr>
@@ -180,7 +208,13 @@ export function TableChart({ table }: { table: ParsedTable }) {
                         isPercent && negative && "delta-down font-semibold"
                       )}
                     >
-                      {cell}
+                      {/*
+                        Cells go through the same inline parser as paragraphs
+                        so **bold**, *italic*, `code`, and [links](url) inside
+                        a cell render properly instead of showing literal
+                        markdown markers.
+                      */}
+                      {renderInline(cell, `td-${ri}-${ci}`)}
                     </td>
                   );
                 })}
@@ -196,7 +230,15 @@ export function TableChart({ table }: { table: ParsedTable }) {
           <div className="pointer-events-none absolute inset-x-3 top-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-3)]">
             Hover bars for detail
           </div>
-          <div className="mt-7 h-[240px] w-full [&_.recharts-tooltip-wrapper]:!z-[80] [&_.recharts-tooltip-wrapper]:!outline-none">
+          {/*
+            Chart container grows when labels are rotated so the rotated text
+            has somewhere to live — keeping the bars area roughly the same
+            ~210px regardless.
+          */}
+          <div
+            className="mt-7 w-full [&_.recharts-tooltip-wrapper]:!z-[80] [&_.recharts-tooltip-wrapper]:!outline-none"
+            style={{ height: chartData.length > 6 ? 280 : 240 }}
+          >
             <ResponsiveContainer>
               <BarChart
                 data={chartData}
@@ -209,6 +251,14 @@ export function TableChart({ table }: { table: ParsedTable }) {
                   strokeOpacity={0.85}
                   vertical={false}
                 />
+                {/*
+                  Rotated labels — when there are many bars (e.g. 11 metrics
+                  for an equity profile) horizontal labels collide into a
+                  single illegible strip. Rotating them −32° at the right
+                  anchor with the chart's ~60px axis height gives plenty of
+                  space without truncating mid-word, while still reading
+                  left-to-right.
+                */}
                 <XAxis
                   dataKey="label"
                   tick={{
@@ -221,10 +271,16 @@ export function TableChart({ table }: { table: ParsedTable }) {
                   tickLine={{ stroke: "var(--stroke-2)" }}
                   axisLine={{ stroke: "var(--stroke)" }}
                   interval={0}
-                  tickMargin={8}
-                  tickFormatter={(s) =>
-                    String(s).length > 14 ? `${String(s).slice(0, 12)}…` : String(s)
-                  }
+                  height={chartData.length > 6 ? 64 : 32}
+                  angle={chartData.length > 6 ? -32 : 0}
+                  textAnchor={chartData.length > 6 ? "end" : "middle"}
+                  tickMargin={chartData.length > 6 ? 4 : 8}
+                  tickFormatter={(s) => {
+                    const clean = stripMd(String(s));
+                    return clean.length > 22
+                      ? `${clean.slice(0, 20)}…`
+                      : clean;
+                  }}
                 />
                 <YAxis
                   stroke="var(--stroke-2)"

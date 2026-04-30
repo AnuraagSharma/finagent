@@ -11,8 +11,11 @@ import { CodeBlock } from "./CodeBlock";
  *  - **bold**, *italic*
  *  - `code`
  *  - [text](url)  -> external link
+ *
+ * Exported so other renderers (e.g. TableChart cells) can reuse the same
+ * inline parser instead of dumping raw text and showing literal `**` markers.
  */
-function renderInline(text: string, keyBase: string): React.ReactNode {
+export function renderInline(text: string, keyBase: string): React.ReactNode {
   const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
   const parts: React.ReactNode[] = [];
   let last = 0;
