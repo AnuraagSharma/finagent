@@ -11,7 +11,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { useMemo } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { useRecents } from "@/lib/stores";
 import { cn } from "@/lib/cn";
 import { groupRecentsByTime } from "@/lib/time";
@@ -119,29 +118,22 @@ export function Sidebar({
             <BrandMark size={17} />
           </span>
 
-          {/* Title block: fades in/out but does not change header height */}
-          <AnimatePresence initial={false}>
-            {!collapsed && (
-              <motion.span
-                key="brand-text"
-                initial={{ opacity: 0, x: -6 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -6 }}
-                transition={{ duration: 0.14, ease: "easeOut" }}
-                className="flex min-w-0 flex-1 flex-col overflow-hidden leading-tight"
-              >
-                <span
-                  className="text-[16.5px] font-extrabold tracking-[-0.01em] text-[var(--text)]"
-                  style={{ fontFamily: "var(--font-display)" }}
-                >
-                  FinAgent
-                </span>
-                <span className="mt-0.5 truncate text-[9.5px] font-bold tracking-[0.22em] text-[var(--muted-2)]">
-                  DEEP RESEARCH
-                </span>
-              </motion.span>
-            )}
-          </AnimatePresence>
+          {/*
+            Always rendered, fades via sb-text-fade (data-collapsed driven).
+            Keeping it in the DOM means no AnimatePresence remount jank during
+            the wrapper's width transition.
+          */}
+          <span className="sb-text-fade flex min-w-0 flex-1 flex-col overflow-hidden leading-tight">
+            <span
+              className="text-[16.5px] font-extrabold tracking-[-0.01em] text-[var(--text)]"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              FinAgent
+            </span>
+            <span className="mt-0.5 truncate text-[9.5px] font-bold tracking-[0.22em] text-[var(--muted-2)]">
+              DEEP RESEARCH
+            </span>
+          </span>
         </button>
       </div>
 
@@ -164,8 +156,9 @@ export function Sidebar({
                 onMouseDown={(e) => e.preventDefault()}
                 aria-label="New chat"
                 className={cn(
+                  // Layout is FIXED across collapsed/expanded — wrapper clips
+                  // the right side when collapsed, so no reflow → no blink.
                   "flex min-h-9 w-full items-center gap-2.5 rounded-[12px] px-2.5 py-2",
-                  collapsed && "mx-auto w-10 justify-center px-0",
                   "text-left text-[13.5px] font-semibold text-[var(--muted)]",
                   "transition-colors hover:bg-white/[0.04] hover:text-[var(--text)]",
                   // Avoid the “square glitz” on click/focus while still being keyboard-safe elsewhere.
@@ -184,9 +177,7 @@ export function Sidebar({
                     <Plus size={13} strokeWidth={3} />
                   </span>
                 </span>
-                <span className={cn("min-w-0 flex-1 sb-text-fade", collapsed && "hidden")}>
-                  New Chat
-                </span>
+                <span className="min-w-0 flex-1 sb-text-fade">New Chat</span>
               </button>
             </Tooltip>
           </div>
@@ -232,113 +223,111 @@ export function Sidebar({
           </nav>
         </div>
 
-        {/* Recents + fill (inside middle column so offset still applies above) */}
-        {!collapsed && (
-          <>
-            <div className="mt-5 flex items-center justify-between px-3.5 pb-1.5">
-              <div className="text-[10.5px] font-bold uppercase tracking-[0.2em] text-[var(--muted-2)]">
-                Recent
-              </div>
-              <Tooltip label="Search · Ctrl+K">
-                <button
-                  type="button"
-                  onClick={onOpenCommandPalette}
-                  aria-label="Search chats"
-                  className="grid h-6 w-6 place-items-center rounded-md text-[var(--muted-3)] hover:bg-white/5 hover:text-[var(--text)]"
-                >
-                  <Search size={12} />
-                </button>
-              </Tooltip>
+        {/*
+          Recents always rendered; .sb-text-fade fades the whole block out when
+          collapsed (and disables pointer events so the clipped truncated rows
+          can't be accidentally clicked through).
+        */}
+        <div className="sb-text-fade flex min-h-0 flex-1 flex-col">
+          <div className="mt-5 flex items-center justify-between px-3.5 pb-1.5">
+            <div className="text-[10.5px] font-bold uppercase tracking-[0.2em] text-[var(--muted-2)]">
+              Recent
             </div>
+            <Tooltip label="Search · Ctrl+K">
+              <button
+                type="button"
+                onClick={onOpenCommandPalette}
+                aria-label="Search chats"
+                className="grid h-6 w-6 place-items-center rounded-md text-[var(--muted-3)] hover:bg-white/5 hover:text-[var(--text)]"
+              >
+                <Search size={12} />
+              </button>
+            </Tooltip>
+          </div>
 
-            <div
-              id="recents"
-              className="scroll-area mt-1 flex-1 overflow-auto px-2 pb-2"
-            >
-              {recents.length === 0 ? (
-                <div className="px-2 text-[12.5px] text-[var(--muted-3)]">
-                  No chats yet — start one above.
-                </div>
-              ) : (
-                <div className="flex flex-col gap-3">
-                  {groups.map((g) => (
-                    <div key={g.label}>
-                      <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--muted-3)]">
-                        {g.label}
-                      </div>
-                      <div className="flex flex-col gap-0.5">
-                        {g.items.map((r) => {
-                          const active = activeThreadId === r.threadId;
-                          return (
-                            <div
-                              key={r.threadId}
+          <div
+            id="recents"
+            className="scroll-area mt-1 flex-1 overflow-auto px-2 pb-2"
+          >
+            {recents.length === 0 ? (
+              <div className="px-2 text-[12.5px] text-[var(--muted-3)]">
+                No chats yet — start one above.
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {groups.map((g) => (
+                  <div key={g.label}>
+                    <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--muted-3)]">
+                      {g.label}
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {g.items.map((r) => {
+                        const active = activeThreadId === r.threadId;
+                        return (
+                          <div
+                            key={r.threadId}
+                            className={cn(
+                              "group relative flex items-center gap-1 rounded-[10px] border border-transparent px-2 transition-colors",
+                              active
+                                ? "border-[var(--stroke-accent)] bg-[var(--accent-soft)]"
+                                : "hover:border-[var(--stroke)] hover:bg-white/[0.035]"
+                            )}
+                          >
+                            {active && (
+                              <span
+                                aria-hidden
+                                className="absolute -left-px top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-[var(--accent)]"
+                              />
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => onResume(r.threadId, r.title)}
+                              title={r.threadId}
                               className={cn(
-                                "group relative flex items-center gap-1 rounded-[10px] border border-transparent px-2 transition-colors",
+                                "flex-1 truncate py-2 text-left text-[13px]",
                                 active
-                                  ? "border-[var(--stroke-accent)] bg-[var(--accent-soft)]"
-                                  : "hover:border-[var(--stroke)] hover:bg-white/[0.035]"
+                                  ? "text-[var(--text)]"
+                                  : "text-[var(--muted)] group-hover:text-[var(--text)]"
                               )}
                             >
-                              {active && (
-                                <span
-                                  aria-hidden
-                                  className="absolute -left-px top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-[var(--accent)]"
-                                />
-                              )}
+                              {r.title || "Untitled"}
+                            </button>
+                            <Tooltip label="Remove">
                               <button
                                 type="button"
-                                onClick={() => onResume(r.threadId, r.title)}
-                                title={r.threadId}
-                                className={cn(
-                                  "flex-1 truncate py-2 text-left text-[13px]",
-                                  active
-                                    ? "text-[var(--text)]"
-                                    : "text-[var(--muted)] group-hover:text-[var(--text)]"
-                                )}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  remove(r.threadId);
+                                }}
+                                className="grid h-7 w-7 place-items-center rounded-md text-[var(--muted-3)] opacity-0 transition-opacity hover:bg-white/5 hover:text-[var(--loss)] group-hover:opacity-100"
+                                aria-label="Remove from recents"
                               >
-                                {r.title || "Untitled"}
+                                <Trash2 size={12} />
                               </button>
-                              <Tooltip label="Remove">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    remove(r.threadId);
-                                  }}
-                                  className="grid h-7 w-7 place-items-center rounded-md text-[var(--muted-3)] opacity-0 transition-opacity hover:bg-white/5 hover:text-[var(--loss)] group-hover:opacity-100"
-                                  aria-label="Remove from recents"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              </Tooltip>
-                            </div>
-                          );
-                        })}
-                      </div>
+                            </Tooltip>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {collapsed && <div className="min-h-0 flex-1" />}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
       </div>
       {/* end middle column */}
 
-      {/* Foot status */}
+      {/* Foot status — labels always rendered, faded out via sb-text-fade. */}
       <div className="mt-auto flex items-center gap-2 border-t border-[var(--stroke)] px-3 pb-2.5 pt-3 text-[12px] text-[var(--muted-2)]">
         <span className="status-dot" />
-        {!collapsed && (
-          <span className="flex flex-1 items-center justify-between">
-            <span>Online</span>
-            <span className="num font-mono text-[10.5px] text-[var(--muted-3)]">
-              v0.1
-            </span>
+        <span className="sb-text-fade flex flex-1 items-center justify-between">
+          <span>Online</span>
+          <span className="num font-mono text-[10.5px] text-[var(--muted-3)]">
+            v0.1
           </span>
-        )}
+        </span>
       </div>
     </aside>
   );
@@ -365,8 +354,9 @@ function NavItem({
         aria-label={label}
         onMouseDown={(e) => e.preventDefault()}
         className={cn(
+          // Layout is FIXED; collapsed-state visibility is purely opacity
+          // driven by sb-text-fade. Wrapper clips the right side at 72px.
           "flex min-h-9 w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2",
-          collapsed && "mx-auto w-10 justify-center px-0",
           "text-[13.5px] text-[var(--muted)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text)]",
           "outline-none focus:outline-none focus-visible:ring-0 focus-visible:outline-none"
         )}
@@ -374,10 +364,8 @@ function NavItem({
         <span className="grid w-5 shrink-0 place-items-center text-[var(--muted-2)]">
           {icon}
         </span>
-        <span className={cn("flex-1 text-left sb-text-fade", collapsed && "hidden")}>
-          {label}
-        </span>
-        {!collapsed && right}
+        <span className="flex-1 text-left sb-text-fade">{label}</span>
+        {right && <span className="sb-text-fade">{right}</span>}
       </button>
     </Tooltip>
   );

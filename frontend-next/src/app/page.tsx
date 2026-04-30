@@ -464,7 +464,13 @@ export default function Home() {
 
   return (
     <div className="flex h-screen min-h-0 flex-col lg:flex-row">
-      {/* Width animates quickly; content tracks collapsed flag immediately so nothing “pops in” after. */}
+      {/*
+        Outer wrapper animates width (72 ↔ 284). The inner shell is locked at the
+        full expanded width so the sidebar's internal layout never reflows during
+        the transition — the wrapper's overflow:hidden simply clips it. All
+        content visibility is driven by opacity (via .sb-text-fade + data-collapsed),
+        which is what gives the Claude-like buttery feel with no button blink.
+      */}
       <motion.div
         className="relative z-[100] hidden h-screen min-h-0 shrink-0 overflow-hidden lg:block"
         initial={false}
@@ -479,16 +485,18 @@ export default function Home() {
               }
         }
       >
-        <Sidebar
-          activeThreadId={threadId}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-          onNewChat={newChat}
-          onResume={(id, t) => resumeThread(id, t)}
-          onPickPrompt={pickPrompt}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenCommandPalette={() => setPaletteOpen(true)}
-        />
+        <div className="h-full" style={{ width: 284 }}>
+          <Sidebar
+            activeThreadId={threadId}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+            onNewChat={newChat}
+            onResume={(id, t) => resumeThread(id, t)}
+            onPickPrompt={pickPrompt}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenCommandPalette={() => setPaletteOpen(true)}
+          />
+        </div>
       </motion.div>
 
       <motion.main

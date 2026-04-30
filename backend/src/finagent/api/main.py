@@ -16,17 +16,19 @@ settings = get_settings()
 engine = create_pg_engine(settings.database_url)
 session_factory = create_session_factory(engine)
 
+_DEFAULT_DEV_ORIGINS = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+)
+
 app.add_middleware(
     CORSMiddleware,
     # Explicit origins for the frontends we actually run.
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ],
+    allow_origins=list(dict.fromkeys((*_DEFAULT_DEV_ORIGINS, *settings.cors_allow_origins))),
     # Permissive regex so any localhost dev port (3000–8999) works without re-deploys.
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
