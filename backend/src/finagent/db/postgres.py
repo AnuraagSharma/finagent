@@ -16,7 +16,12 @@ def create_pg_engine(database_url: str):
         database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
 
     # Neon requires sslmode=require; URL already includes it.
-    return create_engine(database_url, pool_pre_ping=True)
+    # Bounded connect avoids hanging startup (and idle TCP) when the DB is unreachable.
+    return create_engine(
+        database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 15},
+    )
 
 
 def create_session_factory(engine) -> sessionmaker[Session]:

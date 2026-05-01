@@ -95,8 +95,18 @@ type Attachment = {
   truncatedRows: number;
 };
 
-const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024; // 2MB hard cap so we don't blow up the prompt
+const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 
+/**
+ * The chat composer ("search bar") at the bottom of the conversation.
+ *
+ * The previous design stacked three surfaces of slightly different shades —
+ * darker toolbar / medium shell / darker input row — which made the bar feel
+ * busy and seam-y. This rewrite flattens it: one solid `var(--panel)` surface
+ * with a subtle `var(--stroke)` border, separated internally by hairline
+ * dividers (same bg, just border-b). Focus pulls a soft accent ring around
+ * the whole shell so the active state is immediately readable.
+ */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   { onSend, onStop, isStreaming, disabled }: Props,
   ref
@@ -149,11 +159,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     }
   }
 
-  /**
-   * Compose the final outgoing message:
-   *   [active skill prefix] + [user text] + (newline) + [attachment markdown blocks]
-   * Skills are tag-style so the user never sees the prefix in their input.
-   */
   function buildOutgoing(userText: string): string {
     const skill = activeSkill ? SKILLS.find((s) => s.id === activeSkill) : null;
     const head = skill ? `${skill.prefix}${userText}` : userText;
@@ -182,8 +187,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   }
 
   function pickSkill(s: Skill) {
-    // Toggle: clicking the active skill clears it. No more text injection —
-    // the prefix is added at submit time so the textarea stays clean.
     setActiveSkill((curr) => (curr === s.id ? null : s.id));
     requestAnimationFrame(() => taRef.current?.focus());
   }
@@ -196,8 +199,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     if (!files || files.length === 0) return;
     const next: Attachment[] = [];
     for (const f of Array.from(files)) {
-      // Accept only by extension to be safe across browsers/OS that don't set
-      // a useful MIME type for CSV.
       if (!/\.csv$/i.test(f.name)) {
         showToast(`${f.name}: only .csv files are supported right now.`);
         continue;
@@ -228,7 +229,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       setAttachments((prev) => [...prev, ...next]);
       requestAnimationFrame(() => taRef.current?.focus());
     }
-    // Reset so picking the same file twice still triggers onChange
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -240,8 +240,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     ? SKILLS.find((s) => s.id === activeSkill)
     : null;
   const hasPills = !!activeSkillObj || attachments.length > 0;
-
-  const radius = "rounded-2xl";
+  const canSend = value.trim().length > 0 || attachments.length > 0;
 
   return (
     <div
@@ -253,192 +252,209 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     >
       <div
         ref={wrapRef}
+        aria-disabled={disabled || undefined}
         className={cn(
-          "composer-shell relative mx-auto max-w-[920px] backdrop-blur-xl",
-          radius
+          "relative mx-auto max-w-[920px] overflow-hidden rounded-[20px]",
+          "border border-[var(--stroke-2)] bg-[var(--panel)]",
+          // Theme-aware base shadow — softer than before so the shell lifts
+          // off the chat without bruising the page in light mode.
+          "shadow-[var(--shadow-2)]",
+          "transition-[border-color,box-shadow,opacity] duration-200",
+          // Hover: subtle border bump, no shadow change yet.
+          "hover:border-[color:color-mix(in_oklab,var(--stroke-2)_70%,var(--accent)_30%)]",
+          // Focus: full accent border + 4px accent-soft ring stacked on the base shadow.
+          "focus-within:!border-[var(--accent)]/70",
+          "focus-within:shadow-[0_0_0_4px_var(--accent-soft),var(--shadow-2)]",
+          // Whole composer goes dim & non-interactive while a request is in flight.
+          disabled && "pointer-events-none opacity-60"
         )}
       >
-        <div className={cn("overflow-hidden", radius)}>
-          {/* Tool strip — compact, no marketing copy */}
+        {/* Toolbar — small skill chips, hairline divider below */}
+        <div
+          className="flex items-center gap-1 border-b border-[var(--stroke)] px-2 py-1.5"
+          role="toolbar"
+          aria-label="Input helpers"
+        >
           <div
-            className="composer-toolbar flex items-center gap-1 px-2.5 pt-2 pb-1.5 sm:px-3"
-            role="toolbar"
-            aria-label="Input helpers"
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-0.5",
+              "overflow-x-auto overflow-y-hidden",
+              "[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            )}
           >
-            <div
-              className={cn(
-                "flex min-w-0 flex-1 items-center gap-1",
-                "overflow-x-auto overflow-y-hidden",
-                "[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-              )}
+            {SKILLS.map((s) => {
+              const active = activeSkill === s.id;
+              return (
+                <Tooltip key={s.id} label={s.hint}>
+                  <button
+                    type="button"
+                    onClick={() => pickSkill(s)}
+                    aria-pressed={active}
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium",
+                      "transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40",
+                      active
+                        ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                        : // Resting state intentionally muted so skills don't fight the textarea
+                          "text-[var(--muted-2)] hover:bg-[var(--hover-soft)] hover:text-[var(--text)]"
+                    )}
+                  >
+                    <s.Icon
+                      size={13}
+                      className={cn(
+                        "shrink-0",
+                        active ? "text-[var(--accent)]" : "text-[var(--muted-3)]"
+                      )}
+                    />
+                    <span className="hidden sm:inline">{s.label}</span>
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Pills row — only renders when there's something staged. */}
+        <AnimatePresence initial={false}>
+          {hasPills && (
+            <motion.div
+              key="pills"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.16, ease: [0.2, 0.7, 0.2, 1] }}
+              className="overflow-hidden border-b border-[var(--stroke)]"
             >
-              {SKILLS.map((s) => {
-                const active = activeSkill === s.id;
-                return (
-                  <Tooltip key={s.id} label={s.hint}>
+              <div className="flex flex-wrap items-center gap-1.5 px-3 py-2">
+                {activeSkillObj && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--stroke-accent)] bg-[var(--accent-soft)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--accent)]">
+                    <activeSkillObj.Icon size={11} />
+                    {activeSkillObj.label}
                     <button
                       type="button"
-                      onClick={() => pickSkill(s)}
-                      className={cn(
-                        "inline-flex shrink-0 snap-start items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12px] font-medium tracking-[-0.01em]",
-                        "transition-[background-color,color,box-shadow]",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--panel)]",
-                        active
-                          ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                          : "text-[var(--muted-2)] hover:bg-white/[0.055] hover:text-[var(--text)]"
-                      )}
+                      onClick={() => setActiveSkill(null)}
+                      aria-label={`Remove ${activeSkillObj.label} skill`}
+                      className="grid h-4 w-4 place-items-center rounded-full text-[var(--accent)]/80 transition-colors hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]"
                     >
-                      <s.Icon
-                        size={13}
-                        className={cn(
-                          "shrink-0 opacity-90",
-                          active ? "text-[var(--accent)]" : "text-[var(--muted-3)]"
-                        )}
-                      />
-                      <span className="hidden sm:inline">{s.label}</span>
+                      <X size={10} strokeWidth={2.5} />
                     </button>
-                  </Tooltip>
-                );
-              })}
-            </div>
-          </div>
-
-          {/*
-            Pills row — active skill + staged CSV attachments. Rendered above
-            the textarea so the user's actual message stays clean. Pills are
-            removable; the textarea never gets the prefix or attachment text
-            stuffed into it.
-          */}
-          <AnimatePresence initial={false}>
-            {hasPills && (
-              <motion.div
-                key="pills"
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.16, ease: [0.2, 0.7, 0.2, 1] }}
-                className="overflow-hidden"
-              >
-                <div className="flex flex-wrap items-center gap-1.5 px-2.5 pb-1 pt-0.5 sm:px-3">
-                  {activeSkillObj && (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11.5px] font-medium",
-                        "border-[var(--stroke-accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-                      )}
-                    >
-                      <activeSkillObj.Icon size={11} />
-                      {activeSkillObj.label}
+                  </span>
+                )}
+                {attachments.map((a) => (
+                  <Tooltip
+                    key={a.id}
+                    label={
+                      a.truncatedRows > 0
+                        ? `${fmtBytes(a.bytes)} · ${a.truncatedRows} rows truncated`
+                        : fmtBytes(a.bytes)
+                    }
+                  >
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--stroke)] bg-[var(--hover-soft)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--text)]">
+                      <FileSpreadsheet
+                        size={11}
+                        className="text-[var(--accent)]"
+                      />
+                      <span className="max-w-[180px] truncate">{a.name}</span>
+                      <span className="num font-mono text-[10px] text-[var(--muted-3)]">
+                        {fmtBytes(a.bytes)}
+                      </span>
                       <button
                         type="button"
-                        onClick={() => setActiveSkill(null)}
-                        aria-label={`Remove ${activeSkillObj.label} skill`}
-                        className="grid h-4 w-4 place-items-center rounded-full text-[var(--accent)]/80 transition-colors hover:bg-white/[0.08] hover:text-[var(--accent)]"
+                        onClick={() => removeAttachment(a.id)}
+                        aria-label={`Remove ${a.name}`}
+                        className="grid h-4 w-4 place-items-center rounded-full text-[var(--muted-2)] transition-colors hover:bg-[var(--hover-stronger)] hover:text-[var(--text)]"
                       >
                         <X size={10} strokeWidth={2.5} />
                       </button>
                     </span>
-                  )}
-                  {attachments.map((a) => (
-                    <Tooltip
-                      key={a.id}
-                      label={
-                        a.truncatedRows > 0
-                          ? `${fmtBytes(a.bytes)} · ${a.truncatedRows} rows truncated`
-                          : fmtBytes(a.bytes)
-                      }
-                    >
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--stroke)] bg-[var(--panel-2)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--text)]">
-                        <FileSpreadsheet
-                          size={11}
-                          className="text-[var(--accent)]"
-                        />
-                        <span className="max-w-[180px] truncate">{a.name}</span>
-                        <span className="num font-mono text-[10px] text-[var(--muted-3)]">
-                          {fmtBytes(a.bytes)}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => removeAttachment(a.id)}
-                          aria-label={`Remove ${a.name}`}
-                          className="grid h-4 w-4 place-items-center rounded-full text-[var(--muted-2)] transition-colors hover:bg-white/[0.08] hover:text-[var(--text)]"
-                        >
-                          <X size={10} strokeWidth={2.5} />
-                        </button>
-                      </span>
-                    </Tooltip>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                  </Tooltip>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-          <div className="composer-input-row flex items-end gap-1.5 px-2 py-2 sm:gap-2 sm:px-3 sm:py-2.5">
-            <div className="flex shrink-0 items-end pb-px">
-              <Tooltip label="Attach CSV">
-                <button
-                  type="button"
-                  onClick={openFilePicker}
-                  className="grid h-9 w-9 place-items-center rounded-lg text-[var(--muted-2)] transition-colors hover:bg-white/[0.05] hover:text-[var(--text)]"
-                  aria-label="Attach CSV file"
-                >
-                  <Paperclip size={16} strokeWidth={2} />
-                </button>
-              </Tooltip>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv,text/csv"
-                multiple
-                hidden
-                onChange={(e) => onFilesPicked(e.target.files)}
-              />
-            </div>
-
-            <textarea
-              ref={taRef}
-              rows={1}
-              placeholder="Message…"
-              className="min-h-[44px] max-h-[220px] flex-1 resize-none border-0 bg-transparent px-0.5 py-2.5 text-[15px] leading-[1.55] outline-none placeholder:text-[var(--muted-3)]"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={handleKey}
+        {/* Input row */}
+        <div className="flex items-end gap-1.5 px-2 py-2 sm:gap-2 sm:px-3 sm:py-2.5">
+          <div className="flex shrink-0 items-end pb-px">
+            <Tooltip label="Attach CSV">
+              <button
+                type="button"
+                onClick={openFilePicker}
+                aria-label="Attach CSV file"
+                className="grid h-9 w-9 place-items-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--hover-soft)] hover:text-[var(--text)]"
+              >
+                <Paperclip size={16} strokeWidth={2} />
+              </button>
+            </Tooltip>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              multiple
+              hidden
+              onChange={(e) => onFilesPicked(e.target.files)}
             />
+          </div>
 
-            <div className="flex shrink-0 items-center pb-px">
-              <AnimatePresence mode="popLayout" initial={false}>
-                {isStreaming ? (
-                  <motion.button
-                    key="stop"
-                    type="button"
-                    onClick={onStop}
-                    initial={{ opacity: 0, scale: 0.94 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.94 }}
-                    transition={{ duration: 0.14 }}
-                    title="Stop generating"
-                    aria-label="Stop generating"
-                    className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--stroke)] bg-white/[0.04] text-[var(--text)] transition-colors hover:bg-white/[0.07]"
-                  >
-                    <Square size={13} strokeWidth={2.5} />
-                  </motion.button>
-                ) : (
-                  <motion.button
-                    key="send"
-                    type="button"
-                    onClick={submit}
-                    initial={{ opacity: 0, scale: 0.94 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.94 }}
-                    transition={{ duration: 0.14 }}
-                    aria-label="Send"
-                    className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--accent)] text-[#06141b] shadow-[0_6px_20px_var(--accent-glow)] transition-[filter,transform] hover:brightness-105 active:translate-y-[0.5px]"
-                  >
-                    <Send size={15} strokeWidth={2.25} />
-                  </motion.button>
-                )}
-              </AnimatePresence>
-            </div>
+          <textarea
+            ref={taRef}
+            rows={1}
+            placeholder="Ask about earnings, filings, valuations…"
+            disabled={disabled}
+            className={cn(
+              "min-h-[40px] max-h-[220px] flex-1 resize-none border-0 bg-transparent px-1 py-2 text-[15px] leading-[1.55] outline-none",
+              "text-[var(--text)] placeholder:text-[var(--muted-3)]",
+              "[caret-color:var(--accent)]",
+              "disabled:cursor-not-allowed"
+            )}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKey}
+            aria-label="Message"
+          />
+
+          <div className="flex shrink-0 items-center pb-px">
+            <AnimatePresence mode="popLayout" initial={false}>
+              {isStreaming ? (
+                <motion.button
+                  key="stop"
+                  type="button"
+                  onClick={onStop}
+                  initial={{ opacity: 0, scale: 0.94 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.94 }}
+                  transition={{ duration: 0.14 }}
+                  title="Stop generating"
+                  aria-label="Stop generating"
+                  className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--stroke-2)] bg-[var(--hover-soft)] text-[var(--text)] transition-colors hover:bg-[var(--hover-stronger)]"
+                >
+                  <Square size={13} strokeWidth={2.5} />
+                </motion.button>
+              ) : (
+                <motion.button
+                  key="send"
+                  type="button"
+                  onClick={submit}
+                  disabled={!canSend || disabled}
+                  initial={{ opacity: 0, scale: 0.94 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.94 }}
+                  transition={{ duration: 0.14 }}
+                  aria-label="Send"
+                  title="Send · Enter"
+                  className={cn(
+                    "grid h-9 w-9 place-items-center rounded-lg transition-[opacity,filter,transform]",
+                    canSend && !disabled
+                      ? "bg-[var(--accent)] text-[var(--on-accent)] hover:brightness-110 active:translate-y-[0.5px]"
+                      : "cursor-not-allowed bg-[var(--hover-soft)] text-[var(--muted-3)]"
+                  )}
+                >
+                  <Send size={15} strokeWidth={2.25} />
+                </motion.button>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>

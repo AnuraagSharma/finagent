@@ -5,18 +5,17 @@ import {
   Moon,
   Sun,
   Settings as SettingsIcon,
-  Search,
   ArrowLeft,
-  MoreHorizontal,
-  BarChart3,
   Eraser,
   Download,
-  MessageSquare,
+  LogOut,
+  ChevronDown,
 } from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
+import { useSettings } from "@/lib/stores";
 import { Tooltip } from "./Tooltip";
 
 type Props = {
@@ -31,11 +30,21 @@ type Props = {
   onClear: () => void;
   onExport: () => void;
   onSettings: () => void;
-  onCommand: () => void;
 };
 
+/**
+ * Top bar for the chat surface.
+ *
+ * Layout (left → right):
+ *   [Mobile menu] [Back] · · · Search · Analytics · Feedback · Avatar▾
+ *
+ * The bar is intentionally low-chrome: nav items are plain text links with a
+ * soft hover background; the only "visual weight" goes to the avatar pill on
+ * the right which doubles as the account menu (Theme, Settings, Export, Clear,
+ * Sign out).
+ */
 export function Topbar({
-  title,
+  title: _title,
   scrolled,
   inConversation,
   onMenu,
@@ -45,23 +54,23 @@ export function Topbar({
   onClear,
   onExport,
   onSettings,
-  onCommand,
 }: Props) {
   const { theme, setTheme } = useTheme();
+  const { userId } = useSettings();
   const [mounted, setMounted] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const moreRef = useRef<HTMLDivElement | null>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
-      if (!moreOpen) return;
-      const el = moreRef.current;
-      if (el && !el.contains(e.target as Node)) setMoreOpen(false);
+      if (!accountOpen) return;
+      const el = accountRef.current;
+      if (el && !el.contains(e.target as Node)) setAccountOpen(false);
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMoreOpen(false);
+      if (e.key === "Escape") setAccountOpen(false);
     }
     document.addEventListener("mousedown", onClick);
     document.addEventListener("keydown", onKey);
@@ -69,24 +78,30 @@ export function Topbar({
       document.removeEventListener("mousedown", onClick);
       document.removeEventListener("keydown", onKey);
     };
-  }, [moreOpen]);
+  }, [accountOpen]);
+
+  const initials = initialsFromUserId(userId);
+  const isLight = mounted && theme === "light";
 
   return (
     <header
       className={cn(
-        "sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-[var(--stroke)] bg-[var(--glass)] px-4 py-3 backdrop-blur-md transition-shadow",
+        "sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-[var(--stroke)] bg-[var(--glass)] px-4 py-2.5 backdrop-blur-md transition-shadow",
         scrolled && "topbar-scrolled"
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <button
-          type="button"
-          onClick={onMenu}
-          className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--stroke)] hover:bg-white/5 lg:hidden"
-          aria-label="Open menu"
-        >
-          <Menu size={16} />
-        </button>
+      {/* Left cluster — mobile menu + back */}
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <Tooltip label="Open menu">
+          <button
+            type="button"
+            onClick={onMenu}
+            aria-label="Open menu"
+            className={cn(ghostIcon, "lg:hidden")}
+          >
+            <Menu size={16} />
+          </button>
+        </Tooltip>
 
         {inConversation && (
           <Tooltip label="Back to home">
@@ -94,121 +109,138 @@ export function Topbar({
               type="button"
               onClick={onHome}
               aria-label="Back to home"
-              className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--stroke)] text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)]"
+              className={navLink}
             >
-              <ArrowLeft size={15} />
+              <ArrowLeft size={14} />
+              <span className="hidden sm:inline">Back</span>
             </button>
           </Tooltip>
         )}
       </div>
 
+      {/* Right cluster — text nav links + avatar */}
       <div className="flex items-center gap-1">
-        <Tooltip label="Search · Ctrl+K">
+        {onAnalytics ? (
           <button
             type="button"
-            onClick={onCommand}
-            aria-label="Search"
-            className="hidden h-9 w-9 place-items-center rounded-[10px] border border-[var(--stroke)] text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)] md:grid"
+            onClick={onAnalytics}
+            className={cn(navLink, "hidden md:inline-flex")}
           >
-            <Search size={14} />
+            Analytics
           </button>
-        </Tooltip>
+        ) : (
+          <Link
+            href="/analytics"
+            className={cn(navLink, "hidden md:inline-flex")}
+          >
+            Analytics
+          </Link>
+        )}
 
-        <Tooltip label="Analytics">
-          {onAnalytics ? (
-            <button
-              type="button"
-              onClick={onAnalytics}
-              aria-label="Analytics"
-              className="hidden h-9 items-center gap-1.5 rounded-[10px] border border-[var(--stroke)] px-2.5 text-[13px] font-semibold text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)] md:inline-flex"
+        <button
+          type="button"
+          onClick={onFeedback}
+          className={cn(navLink, "hidden md:inline-flex")}
+        >
+          Feedback
+        </button>
+
+        {/* Account pill — initials + chevron, opens menu */}
+        <div className="relative ml-1.5" ref={accountRef}>
+          <button
+            type="button"
+            onClick={() => setAccountOpen((v) => !v)}
+            aria-label="Account menu"
+            aria-haspopup="menu"
+            aria-expanded={accountOpen}
+            className={cn(
+              "inline-flex h-9 items-center gap-1.5 rounded-full border border-[var(--stroke)] bg-[var(--hover-soft)] py-0.5 pl-0.5 pr-2 transition-colors",
+              "hover:border-[var(--stroke-2)] hover:bg-[var(--hover-stronger)]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40",
+              accountOpen && "border-[var(--stroke-2)] bg-[var(--hover-stronger)]"
+            )}
+          >
+            <span
+              className="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-[var(--panel-2)] to-[var(--bg-1)] text-[11px] font-extrabold tracking-tight text-[var(--text)] ring-1 ring-inset ring-[var(--stroke-2)]"
+              aria-hidden
             >
-              <BarChart3 size={13} />
-              Analytics
-            </button>
-          ) : (
-            <Link
-              href="/analytics"
-              aria-label="Analytics"
-              className="hidden h-9 items-center gap-1.5 rounded-[10px] border border-[var(--stroke)] px-2.5 text-[13px] font-semibold text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)] md:inline-flex"
-            >
-              <BarChart3 size={13} />
-              Analytics
-            </Link>
-          )}
-        </Tooltip>
-
-        <Sep />
-
-        <Tooltip label="Toggle theme">
-          <button
-            type="button"
-            aria-label="Toggle theme"
-            onClick={() =>
-              setTheme(mounted && theme === "light" ? "dark" : "light")
-            }
-            className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--stroke)] text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)]"
-          >
-            {mounted && theme === "light" ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
-        </Tooltip>
-
-        <Tooltip label="Settings">
-          <button
-            type="button"
-            aria-label="Settings"
-            onClick={onSettings}
-            className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--stroke)] text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)]"
-          >
-            <SettingsIcon size={15} />
-          </button>
-        </Tooltip>
-
-        {/* More menu */}
-        <div className="relative" ref={moreRef}>
-          <Tooltip label="More">
-            <button
-              type="button"
-              aria-label="More"
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-              onClick={() => setMoreOpen((v) => !v)}
+              {initials}
+            </span>
+            <ChevronDown
+              size={13}
               className={cn(
-                "grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--stroke)] text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)]",
-                moreOpen && "bg-white/5 text-[var(--text)]"
+                "text-[var(--muted-2)] transition-transform",
+                accountOpen && "rotate-180 text-[var(--text)]"
               )}
-            >
-              <MoreHorizontal size={15} />
-            </button>
-          </Tooltip>
-          {moreOpen && (
+            />
+          </button>
+
+          {accountOpen && (
             <div
               role="menu"
-              className="absolute right-0 top-[calc(100%+6px)] z-20 w-[200px] overflow-hidden rounded-[12px] border border-[var(--stroke-2)] bg-[var(--glass-2)] py-1 shadow-[var(--shadow-2)] backdrop-blur-md ring-inset-soft"
+              className="absolute right-0 top-[calc(100%+8px)] z-20 w-[240px] overflow-hidden rounded-[14px] border border-[var(--stroke-2)] bg-[var(--panel-2)] py-1.5 shadow-[var(--shadow-2)] ring-inset-soft"
             >
+              {/* Identity header */}
+              <div className="flex items-center gap-2.5 px-3 pb-2.5 pt-1">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[var(--panel-2)] to-[var(--bg-1)] text-[12px] font-extrabold tracking-tight text-[var(--text)] ring-1 ring-inset ring-[var(--stroke-2)]">
+                  {initials}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted-2)]">
+                    Account
+                  </div>
+                  <div className="truncate font-mono text-[12px] text-[var(--text)]">
+                    {userId || "—"}
+                  </div>
+                </div>
+              </div>
+
+              <Divider />
+
               <MenuItem
-                Icon={Eraser}
-                label="Clear chat"
+                Icon={isLight ? Moon : Sun}
+                label={isLight ? "Switch to dark mode" : "Switch to light mode"}
                 onClick={() => {
-                  setMoreOpen(false);
-                  onClear();
+                  setAccountOpen(false);
+                  setTheme(isLight ? "dark" : "light");
                 }}
               />
+              <MenuItem
+                Icon={SettingsIcon}
+                label="Settings"
+                onClick={() => {
+                  setAccountOpen(false);
+                  onSettings();
+                }}
+              />
+
+              <Divider />
+
               <MenuItem
                 Icon={Download}
                 label="Export as Markdown"
                 onClick={() => {
-                  setMoreOpen(false);
+                  setAccountOpen(false);
                   onExport();
                 }}
               />
-              <Divider />
               <MenuItem
-                Icon={MessageSquare}
-                label="Send feedback"
+                Icon={Eraser}
+                label="Clear chat"
+                tone="danger"
                 onClick={() => {
-                  setMoreOpen(false);
-                  onFeedback();
+                  setAccountOpen(false);
+                  onClear();
                 }}
+              />
+
+              <Divider />
+
+              <MenuItem
+                Icon={LogOut}
+                label="Sign out"
+                onClick={() => setAccountOpen(false)}
+                disabled
               />
             </div>
           )}
@@ -218,23 +250,56 @@ export function Topbar({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Shared button styles                                              */
+/* ------------------------------------------------------------------ */
+
+const ghostIcon =
+  "grid h-9 w-9 place-items-center rounded-[10px] text-[var(--muted)] transition-colors " +
+  "hover:bg-[var(--hover-soft)] hover:text-[var(--text)] " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40";
+
+const navLink =
+  "text-btn inline-flex h-9 items-center gap-1.5 rounded-[10px] px-2.5 text-[13px] font-semibold " +
+  "text-[var(--muted)] transition-colors " +
+  "hover:bg-[var(--hover-soft)] hover:text-[var(--text)] " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40";
+
 function MenuItem({
   Icon,
   label,
   onClick,
+  disabled,
+  tone,
 }: {
   Icon: React.ComponentType<{ size?: number; className?: string }>;
   label: string;
   onClick: () => void;
+  disabled?: boolean;
+  tone?: "danger";
 }) {
+  const colorClass = disabled
+    ? "cursor-not-allowed text-[var(--muted-3)]"
+    : tone === "danger"
+    ? "text-[var(--loss)] hover:bg-[var(--loss-soft)]"
+    : "text-[var(--muted)] hover:bg-[var(--hover-soft)] hover:text-[var(--text)]";
+  const iconClass = disabled
+    ? "text-[var(--muted-3)]"
+    : tone === "danger"
+    ? "text-[var(--loss)]"
+    : "text-[var(--muted-2)]";
   return (
     <button
       type="button"
       role="menuitem"
       onClick={onClick}
-      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] text-[var(--muted)] hover:bg-white/[0.05] hover:text-[var(--text)]"
+      disabled={disabled}
+      className={cn(
+        "flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors",
+        colorClass
+      )}
     >
-      <Icon size={13} className="text-[var(--muted-2)]" />
+      <Icon size={13} className={iconClass} />
       {label}
     </button>
   );
@@ -244,11 +309,21 @@ function Divider() {
   return <div className="my-1 h-px bg-[var(--stroke)]" />;
 }
 
-function Sep() {
-  return (
-    <span
-      aria-hidden
-      className="mx-1 inline-block h-[18px] w-px bg-[var(--stroke)]"
-    />
-  );
+/**
+ * Derive ~2-character initials from a user identifier.
+ *
+ * Cases handled:
+ *  - email → first letter of local part + first letter of domain ("john@acme" → "JA")
+ *  - "First Last" / "first_last" / "first-last" → "FL"
+ *  - falls back to first 2 letters of the string
+ */
+function initialsFromUserId(uid: string): string {
+  if (!uid) return "?";
+  if (uid.includes("@")) {
+    const [local = "", domain = ""] = uid.split("@");
+    return ((local[0] || "") + (domain[0] || "")).toUpperCase();
+  }
+  const parts = uid.split(/[\s_-]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return uid.slice(0, 2).toUpperCase();
 }

@@ -299,28 +299,32 @@ export function getAnalyticsSummary({
   userId,
   filters,
   granularity,
+  signal,
 }: {
   backendUrl: string;
   userId: string;
   filters?: AnalyticsFilters;
   granularity?: "daily" | "weekly" | "monthly";
+  signal?: AbortSignal;
 }): Promise<AnalyticsSummary> {
   const url = withFilters(base(backendUrl, "v1/analytics/summary"), filters);
   if (granularity) url.searchParams.set("granularity", granularity);
-  return fetchJson(url, userId);
+  return fetchJson(url, userId, { signal });
 }
 
 export function getAnalyticsUsers({
   backendUrl,
   userId,
   filters,
+  signal,
 }: {
   backendUrl: string;
   userId: string;
   filters?: AnalyticsFilters;
+  signal?: AbortSignal;
 }): Promise<AnalyticsUsers> {
   const url = withFilters(base(backendUrl, "v1/analytics/users"), filters);
-  return fetchJson(url, userId);
+  return fetchJson(url, userId, { signal });
 }
 
 export function getAnalyticsTurns({
@@ -331,6 +335,7 @@ export function getAnalyticsTurns({
   pageSize,
   sort,
   direction,
+  signal,
 }: {
   backendUrl: string;
   userId: string;
@@ -345,13 +350,14 @@ export function getAnalyticsTurns({
     | "step_count"
     | "tool_count";
   direction?: "asc" | "desc";
+  signal?: AbortSignal;
 }): Promise<AnalyticsTurns> {
   const url = withFilters(base(backendUrl, "v1/analytics/turns"), filters);
   if (page) url.searchParams.set("page", String(page));
   if (pageSize) url.searchParams.set("page_size", String(pageSize));
   if (sort) url.searchParams.set("sort", sort);
   if (direction) url.searchParams.set("direction", direction);
-  return fetchJson(url, userId);
+  return fetchJson(url, userId, { signal });
 }
 
 export function getAnalyticsSessions({
@@ -360,33 +366,37 @@ export function getAnalyticsSessions({
   filters,
   page,
   pageSize,
+  signal,
 }: {
   backendUrl: string;
   userId: string;
   filters?: AnalyticsFilters;
   page?: number;
   pageSize?: number;
+  signal?: AbortSignal;
 }): Promise<AnalyticsSessions> {
   const url = withFilters(base(backendUrl, "v1/analytics/sessions"), filters);
   if (page) url.searchParams.set("page", String(page));
   if (pageSize) url.searchParams.set("page_size", String(pageSize));
-  return fetchJson(url, userId);
+  return fetchJson(url, userId, { signal });
 }
 
 export function getAnalyticsSessionDetail({
   backendUrl,
   userId,
   threadId,
+  signal,
 }: {
   backendUrl: string;
   userId: string;
   threadId: string;
+  signal?: AbortSignal;
 }): Promise<AnalyticsSessionDetail> {
   const url = base(
     backendUrl,
     `v1/analytics/sessions/${encodeURIComponent(threadId)}`
   );
-  return fetchJson(url, userId);
+  return fetchJson(url, userId, { signal });
 }
 
 export function getAnalyticsTrends({
@@ -394,15 +404,17 @@ export function getAnalyticsTrends({
   userId,
   filters,
   granularity,
+  signal,
 }: {
   backendUrl: string;
   userId: string;
   filters?: AnalyticsFilters;
   granularity?: "daily" | "weekly" | "monthly";
+  signal?: AbortSignal;
 }): Promise<AnalyticsTrends> {
   const url = withFilters(base(backendUrl, "v1/analytics/trends"), filters);
   if (granularity) url.searchParams.set("granularity", granularity);
-  return fetchJson(url, userId);
+  return fetchJson(url, userId, { signal });
 }
 
 export function exportAnalyticsCsvUrl({

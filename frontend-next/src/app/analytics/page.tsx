@@ -42,6 +42,7 @@ import {
   type TurnRow,
 } from "@/lib/api";
 import { useSettings } from "@/lib/stores";
+import { useDebounced } from "@/lib/useDebounced";
 
 type Tab = "summary" | "users" | "turns" | "sessions" | "trends";
 
@@ -66,9 +67,59 @@ const TABS: { id: Tab; label: string }[] = [
  */
 export default function AnalyticsPage() {
   return (
-    <Suspense fallback={<div className="h-screen w-screen bg-[var(--bg)]" />}>
+    <Suspense fallback={<AnalyticsBootSkeleton />}>
       <AnalyticsPageInner />
     </Suspense>
+  );
+}
+
+/**
+ * Shown for the brief moment after navigating to /analytics, before
+ * `useSearchParams` resolves and the real page mounts. The previous version
+ * was a pure black div which felt frozen — this one renders the chrome
+ * (sidebar rail, header strip, KPI placeholders) so the user immediately
+ * sees the dashboard "is loading" rather than "nothing happened yet".
+ */
+function AnalyticsBootSkeleton() {
+  return (
+    <div className="flex h-screen min-h-0 flex-col lg:flex-row">
+      <div className="hidden h-screen w-[72px] shrink-0 border-r border-[var(--stroke)] bg-[var(--bg-1)] lg:block" />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="border-b border-[var(--stroke)] bg-[var(--glass)] px-5 py-3.5">
+          <div className="skeleton h-5 w-[260px] rounded-md" />
+          <div className="mt-3 flex gap-2">
+            <div className="skeleton h-9 w-20 rounded-[10px]" />
+            <div className="skeleton h-9 w-20 rounded-[10px]" />
+            <div className="skeleton h-9 w-24 rounded-[10px]" />
+            <div className="skeleton h-9 w-24 rounded-[10px]" />
+            <div className="skeleton h-9 w-32 rounded-[10px]" />
+          </div>
+        </div>
+        <div className="border-b border-[var(--stroke)] bg-[var(--bg-1)] px-5 py-3">
+          <div className="flex flex-wrap items-end gap-3">
+            {[140, 140, 140, 130, 140, 140, 140].map((w, i) => (
+              <div key={i} className="flex flex-col gap-1.5">
+                <div className="skeleton h-3 w-16 rounded-md" />
+                <div className="skeleton h-9 rounded-[10px]" style={{ width: w }} />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="flex-1 overflow-hidden px-5 py-5">
+          <div className="mx-auto w-full max-w-[1480px]">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="skeleton h-[100px] rounded-[14px]" />
+              ))}
+            </div>
+            <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="skeleton h-[240px] rounded-[14px]" />
+              <div className="skeleton h-[240px] rounded-[14px]" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -83,6 +134,11 @@ function AnalyticsPageInner() {
   const [filters, setFilters] = useState<AnalyticsFilters>(() =>
     paramsToFilters(search)
   );
+  // Debounced filter object — what actually drives data fetches. Lets the
+  // user type into the User / Error type inputs without firing a network
+  // request on every keystroke. URL sync still uses `filters` (immediate)
+  // so the address bar reflects what the user is typing in real time.
+  const debouncedFilters = useDebounced(filters, 350);
   const [granularity, setGranularity] = useState<"daily" | "weekly" | "monthly">(
     () => (search.get("g") as "daily" | "weekly" | "monthly") || "daily"
   );
@@ -140,9 +196,50 @@ function AnalyticsPageInner() {
     writeUrl();
   }, [writeUrl]);
 
+  /**
+   * The "fingerprint" of inputs that affect each tab's data. Used to skip
+   * refetching when the user navigates away and back without changing
+   * anything. We compute it from the *debounced* filters so a brief flicker
+   * of the input doesn't invalidate cached data.
+   */
+  const fingerprintForTab = useCallback(
+    (which: Tab): string => {
+      const f = debouncedFilters;
+      const common = [
+        f.from ?? "",
+        f.to ?? "",
+        f.status ?? "all",
+        f.errorType ?? "",
+        f.userId ?? "",
+        f.feedback ?? "all",
+      ].join("|");
+      switch (which) {
+        case "summary":
+        case "trends":
+          return `${common}|g=${granularity}`;
+        case "turns":
+          return `${common}|p=${page}|s=${sort}|d=${direction}`;
+        case "sessions":
+          return `${common}|p=1`;
+        case "users":
+          return common;
+      }
+    },
+    [debouncedFilters, granularity, page, sort, direction]
+  );
+  const lastLoadedRef = useRef<Partial<Record<Tab, string>>>({});
+
   // Fetch the active tab's data. Other tabs lazy-load when first opened and on refresh.
   const fetchTab = useCallback(
-    async (which: Tab, opts: { background?: boolean } = {}) => {
+    async (
+      which: Tab,
+      opts: { background?: boolean; force?: boolean; signal?: AbortSignal } = {}
+    ) => {
+      const fp = fingerprintForTab(which);
+      if (!opts.force && lastLoadedRef.current[which] === fp) {
+        // Same inputs as the last successful load — nothing to do.
+        return;
+      }
       setLoading((s) => ({ ...s, [which]: !opts.background }));
       setError(null);
       try {
@@ -154,52 +251,88 @@ function AnalyticsPageInner() {
             getAnalyticsSummary({
               backendUrl,
               userId,
-              filters,
+              filters: debouncedFilters,
               granularity,
+              signal: opts.signal,
             }),
-            getAnalyticsUsers({ backendUrl, userId, filters }).catch(() => null),
+            getAnalyticsUsers({
+              backendUrl,
+              userId,
+              filters: debouncedFilters,
+              signal: opts.signal,
+            }).catch(() => null),
           ]);
           setSummary(d);
           if (u) setUsers(u);
         } else if (which === "users") {
-          const d = await getAnalyticsUsers({ backendUrl, userId, filters });
+          const d = await getAnalyticsUsers({
+            backendUrl,
+            userId,
+            filters: debouncedFilters,
+            signal: opts.signal,
+          });
           setUsers(d);
         } else if (which === "turns") {
           const d = await getAnalyticsTurns({
             backendUrl,
             userId,
-            filters,
+            filters: debouncedFilters,
             page,
             pageSize: 25,
             sort,
             direction,
+            signal: opts.signal,
           });
           setTurns(d);
         } else if (which === "sessions") {
-          const d = await getAnalyticsSessions({ backendUrl, userId, filters, page: 1, pageSize: 100 });
+          const d = await getAnalyticsSessions({
+            backendUrl,
+            userId,
+            filters: debouncedFilters,
+            page: 1,
+            pageSize: 100,
+            signal: opts.signal,
+          });
           setSessions(d);
         } else if (which === "trends") {
           const d = await getAnalyticsTrends({
             backendUrl,
             userId,
-            filters,
+            filters: debouncedFilters,
             granularity,
+            signal: opts.signal,
           });
           setTrends(d);
         }
+        lastLoadedRef.current[which] = fp;
       } catch (e: unknown) {
+        // AbortError is expected when filters change mid-flight — swallow it.
+        const name = (e as { name?: string })?.name;
+        if (name === "AbortError") return;
         const msg = (e as { message?: string })?.message || String(e);
         setError(msg);
       } finally {
         setLoading((s) => ({ ...s, [which]: false }));
       }
     },
-    [backendUrl, userId, filters, granularity, page, sort, direction]
+    [
+      backendUrl,
+      userId,
+      debouncedFilters,
+      granularity,
+      page,
+      sort,
+      direction,
+      fingerprintForTab,
+    ]
   );
 
-  // Load the active tab whenever its inputs change.
+  // Load the active tab whenever its inputs change. Each effect run owns an
+  // AbortController so a stale request can't overwrite fresh data.
   useEffect(() => {
-    void fetchTab(tab);
+    const ac = new AbortController();
+    void fetchTab(tab, { signal: ac.signal });
+    return () => ac.abort();
   }, [fetchTab, tab]);
 
   // Live refresh — polls the active tab in the background every 15s while the page is visible
@@ -224,7 +357,9 @@ function AnalyticsPageInner() {
       if (document.hidden) return;
       const idleMs = Date.now() - lastInteractionRef.current;
       if (idleMs < 4000) return;
-      void fetchTab(tab, { background: true });
+      // Background polling bypasses the cache so it can pick up fresh data
+      // even when filters haven't changed.
+      void fetchTab(tab, { background: true, force: true });
     }, 15000);
     return () => window.clearInterval(id);
   }, [fetchTab, tab]);
@@ -329,7 +464,7 @@ function AnalyticsPageInner() {
               <Tooltip label="Refresh">
                 <button
                   type="button"
-                  onClick={() => fetchTab(tab)}
+                  onClick={() => fetchTab(tab, { force: true })}
                   className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--stroke)] text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)]"
                   aria-label="Refresh"
                 >

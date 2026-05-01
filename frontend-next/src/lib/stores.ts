@@ -30,6 +30,36 @@ export const useSettings = create<SettingsState>()(
   )
 );
 
+/**
+ * Live counters for the user's 👍 / 👎 reactions in the *current* chat
+ * session. Bubble.tsx bumps this every time a user toggles feedback on an
+ * assistant turn; the FeedbackView reads it to give the user contextual
+ * acknowledgement ("you've liked 3 answers in this chat").
+ *
+ * Intentionally NOT persisted — counts reset when the page reloads or when
+ * `reset()` is called (e.g. when a new chat is started).
+ */
+type SessionFeedbackState = {
+  likes: number;
+  dislikes: number;
+  /** Apply a delta to one bucket (+1 / -1). Floors at 0. */
+  bump: (kind: "like" | "dislike", delta: number) => void;
+  reset: () => void;
+};
+
+export const useSessionFeedback = create<SessionFeedbackState>((set) => ({
+  likes: 0,
+  dislikes: 0,
+  bump: (kind, delta) =>
+    set((s) => ({
+      likes:
+        kind === "like" ? Math.max(0, s.likes + delta) : s.likes,
+      dislikes:
+        kind === "dislike" ? Math.max(0, s.dislikes + delta) : s.dislikes,
+    })),
+  reset: () => set({ likes: 0, dislikes: 0 }),
+}));
+
 type RecentsState = {
   recents: Recent[];
   upsert: (r: { threadId: string; title: string }) => void;

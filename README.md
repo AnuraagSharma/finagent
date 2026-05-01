@@ -46,7 +46,48 @@ Frontend (`frontend-next/`): copy `frontend-next/.env.local.example` → `.env.l
 
 Detailed notes: **[`docs/getting-started.md`](docs/getting-started.md)**.
 
-## Quickstart (Docker backend + local UI)
+## Quickstart — one click (Windows)
+
+After the first-time env setup (below), you can launch everything with a
+single double-click. The script checks Docker + Node, brings up Redis +
+backend, installs frontend dependencies if missing, starts the Next.js dev
+server in a new window, and opens your browser when both are healthy.
+
+1. **First-time env setup**
+
+   ```powershell
+   copy .env.example .env
+   # Edit .env: DATABASE_URL, OPENAI_API_KEY, REDIS_URL (optional)
+   copy frontend-next\.env.local.example frontend-next\.env.local
+   ```
+
+2. **Launch**
+
+   - Easiest: double-click **`start.bat`** in the repo root.
+   - From PowerShell: `.\start.ps1`
+
+3. **Stop**
+
+   ```powershell
+   .\stop.ps1
+   ```
+
+   Stops the docker containers. Close the frontend window with `Ctrl+C` or
+   just close the window.
+
+What you'll see when it's running:
+
+| URL | What |
+|---|---|
+| `http://localhost:3000` | Chat UI |
+| `http://localhost:3000/analytics` | Analytics dashboard |
+| `http://localhost:8000/health` | Backend liveness |
+| `http://localhost:8000/docs` | OpenAPI explorer |
+
+The UI sends `X-User-Id` (demo auth) — set a value in **Settings** if
+requests come back 401.
+
+## Quickstart — manual (any OS)
 
 1. **Env**
 
@@ -73,8 +114,7 @@ Detailed notes: **[`docs/getting-started.md`](docs/getting-started.md)**.
    npm run dev
    ```
 
-   Open [`http://localhost:3000`](http://localhost:3000).  
-   The UI sends **`X-User-Id`** (demo auth) — set a value in **Settings** if requests return 401.
+   Open [`http://localhost:3000`](http://localhost:3000).
 
 Stop containers: `docker compose down`.
 

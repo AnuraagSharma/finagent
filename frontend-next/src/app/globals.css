@@ -19,6 +19,8 @@
   --accent-3: #6ee7b7;
   --accent-soft: rgba(52, 211, 153, 0.14);
   --accent-glow: rgba(52, 211, 153, 0.30);
+  /* Foreground colour to use on top of `--accent` fills (icons, button text). */
+  --on-accent: #06141b;
 
   /* Intelligence — indigo, used for AI / agent moments */
   --ai: #818cf8;
@@ -105,6 +107,7 @@
   --accent-3: #047857;
   --accent-soft: rgba(5, 150, 105, 0.10);
   --accent-glow: rgba(5, 150, 105, 0.22);
+  --on-accent: #ffffff;
 
   --ai: #6366f1;
   --ai-2: #4f46e5;

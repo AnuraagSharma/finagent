@@ -4,9 +4,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Markdown } from "./Markdown";
 import { renderMarkdownLite } from "@/lib/markdown";
 import { cn } from "@/lib/cn";
+import { useSessionFeedback } from "@/lib/stores";
 import { useToast } from "./Toaster";
 import { Tooltip } from "./Tooltip";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -196,8 +197,8 @@ function IconAction({
           active
             ? tone === "accent"
               ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-              : "bg-white/[0.07] text-[var(--text)]"
-            : "text-[var(--muted-2)] hover:bg-white/[0.05] hover:text-[var(--text)]"
+              : "bg-[var(--hover-stronger)] text-[var(--text)]"
+            : "text-[var(--muted-2)] hover:bg-[var(--hover-soft)] hover:text-[var(--text)]"
         )}
       >
         {children}
@@ -224,10 +225,32 @@ export function Bubble({ role, text, meta, summary, onRegenerate, onFollowup }: 
   const [feedbackTags, setFeedbackTags] = useState<string[]>([]);
   const [feedbackComment, setFeedbackComment] = useState("");
   const [feedbackSent, setFeedbackSent] = useState(false);
+  const bumpReaction = useSessionFeedback((s) => s.bump);
+  const feedbackCardRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * When the feedback card opens (especially on the latest assistant turn),
+   * the sticky composer at the bottom of the page would otherwise hide it.
+   * Auto-scroll the card into view with `scroll-margin-bottom` set on the
+   * element so the browser leaves room for the dock.
+   */
+  useEffect(() => {
+    if (!feedbackOpen) return;
+    const id = window.requestAnimationFrame(() => {
+      feedbackCardRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [feedbackOpen]);
 
   function openFeedback(kind: FeedbackKind) {
     // Same active thumb pressed again with the card open → clear feedback
     if (feedback === kind && feedbackOpen === kind) {
+      // Roll back the session counter for whichever bucket was active.
+      bumpReaction(kind, -1);
       setFeedback(null);
       setFeedbackOpen(null);
       setFeedbackTags([]);
@@ -235,7 +258,14 @@ export function Bubble({ role, text, meta, summary, onRegenerate, onFollowup }: 
       setFeedbackSent(false);
       return;
     }
-    // Switching kind, or opening for the first time
+    // Switching from one kind to the other → undo old bucket, increment new.
+    if (feedback && feedback !== kind) {
+      bumpReaction(feedback, -1);
+      bumpReaction(kind, +1);
+    } else if (!feedback) {
+      // First-time reaction on this turn.
+      bumpReaction(kind, +1);
+    }
     setFeedback(kind);
     setFeedbackOpen(kind);
     if (feedbackOpen !== kind) {
@@ -361,7 +391,13 @@ export function Bubble({ role, text, meta, summary, onRegenerate, onFollowup }: 
             transition={{ duration: 0.18, ease: [0.2, 0.7, 0.2, 1] }}
             className="overflow-hidden"
           >
-            <div className="mt-2 max-w-[680px] rounded-xl border border-[var(--stroke)] bg-[var(--panel)]/70 p-3">
+            <div
+              ref={feedbackCardRef}
+              // scroll-margin-bottom keeps the card clear of the sticky
+              // composer dock when scrollIntoView fires.
+              style={{ scrollMarginBottom: 220, scrollMarginTop: 80 }}
+              className="mt-2 max-w-[680px] rounded-xl border border-[var(--stroke-2)] bg-[var(--panel-2)] p-3 shadow-[var(--shadow-2)]"
+            >
               <div className="mb-2 flex items-start justify-between gap-2">
                 <div className="text-[13px] font-semibold text-[var(--text)]">
                   {feedbackOpen === "like"
@@ -372,7 +408,7 @@ export function Bubble({ role, text, meta, summary, onRegenerate, onFollowup }: 
                   type="button"
                   onClick={() => setFeedbackOpen(null)}
                   aria-label="Close feedback"
-                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-[var(--muted-2)] transition-colors hover:bg-white/[0.05] hover:text-[var(--text)]"
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-[var(--muted-2)] transition-colors hover:bg-[var(--hover-soft)] hover:text-[var(--text)]"
                 >
                   <X size={12} strokeWidth={2.25} />
                 </button>
@@ -414,9 +450,9 @@ export function Bubble({ role, text, meta, summary, onRegenerate, onFollowup }: 
                 value={feedbackComment}
                 onChange={(e) => setFeedbackComment(e.target.value)}
                 className={cn(
-                  "block w-full resize-none rounded-lg border bg-[var(--bg)]/40 px-2.5 py-1.5 text-[13px] leading-snug",
+                  "block w-full resize-none rounded-lg border bg-[var(--bg-1)] px-2.5 py-1.5 text-[13px] leading-snug",
                   "border-[var(--stroke)] text-[var(--text)] outline-none placeholder:text-[var(--muted-3)]",
-                  "focus:border-[var(--stroke-accent)]"
+                  "focus:border-[var(--stroke-accent)] focus:shadow-[0_0_0_3px_var(--accent-soft)]"
                 )}
               />
 
@@ -424,7 +460,7 @@ export function Bubble({ role, text, meta, summary, onRegenerate, onFollowup }: 
                 <button
                   type="button"
                   onClick={() => setFeedbackOpen(null)}
-                  className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-[var(--muted)] transition-colors hover:bg-white/[0.05] hover:text-[var(--text)]"
+                  className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-[var(--muted)] transition-colors hover:bg-[var(--hover-soft)] hover:text-[var(--text)]"
                 >
                   Cancel
                 </button>
@@ -436,7 +472,7 @@ export function Bubble({ role, text, meta, summary, onRegenerate, onFollowup }: 
                     "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] font-semibold transition-[filter,background-color,color]",
                     feedbackSent
                       ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                      : "bg-[var(--accent)] text-[#06141b] hover:brightness-105 active:translate-y-[0.5px]"
+                      : "bg-[var(--accent)] text-[var(--on-accent)] hover:brightness-105 active:translate-y-[0.5px]"
                   )}
                 >
                   {feedbackSent ? (

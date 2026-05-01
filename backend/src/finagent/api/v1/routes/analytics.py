@@ -25,12 +25,18 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import and_, case, exists, func, select
 from sqlalchemy.orm import Session
 
 from finagent.api.dependencies.admin import require_admin
+from finagent.api.v1.routes._cache import ttl_cache
 from finagent.db.models import AgentInteraction, Feedback
 from finagent.infra.config.pricing import compute_cost, estimate_cost_from_messages
+
+# How long an analytics response is reusable. Short enough that the dashboard
+# still feels live; long enough that the 15s background poll, tab flips, and
+# back-to-back filter tweaks come from memory instead of the database.
+_ANALYTICS_TTL = 8.0
 
 
 router = APIRouter(prefix="/v1/analytics", tags=["analytics"])
@@ -297,68 +303,161 @@ def _feedback_counts(session: Session, interaction_ids: Iterable[int]) -> dict[i
 # ---------- Routes ----------
 
 
-@router.get("/summary", response_model=SummaryResponse)
-def summary(
-    from_: str | None = Query(default=None, alias="from"),
-    to: str | None = Query(default=None),
-    status: StatusFilter = Query(default="all"),
-    error_type: str | None = Query(default=None),
-    user_id: str | None = Query(default=None),
-    feedback: FeedbackFilter = Query(default="all"),
-    granularity: Literal["daily", "weekly", "monthly"] = Query(default="daily"),
-    _admin: str = Depends(require_admin),
+@ttl_cache(ttl=_ANALYTICS_TTL, namespace="analytics.summary")
+def _compute_summary(
+    from_: str | None,
+    to: str | None,
+    status: StatusFilter,
+    error_type: str | None,
+    user_id: str | None,
+    feedback: FeedbackFilter,
+    granularity: str,
 ) -> SummaryResponse:
-    """Top-of-page KPIs + Top Recurring Errors + Response Time Trend."""
+    """The actual summary computation — pushed into SQL aggregates so it
+    scales past a few thousand interactions. Cached for `_ANALYTICS_TTL` so
+    the live-refresh poll & tab flicker don't re-hit the database."""
     session = _session()
     try:
         clauses = _common_filters(_parse_dt(from_), _parse_dt(to), status, error_type, user_id, feedback)
-        rows: list[AgentInteraction] = list(
-            session.execute(select(AgentInteraction).where(and_(*clauses)) if clauses else select(AgentInteraction)).scalars()
-        )
+        where = and_(*clauses) if clauses else None
 
-        total_queries = len(rows)
-        sessions = len({r.thread_id for r in rows})
-        unique_users = len({r.user_id for r in rows})
-        hard = sum(1 for r in rows if r.status == "hard_error")
-        soft = sum(1 for r in rows if r.status == "soft_error")
+        # ------- One scalar aggregate query for the headline KPIs -------
+        # Cost is summed in two passes:
+        #   * SQL `SUM(cost_usd)` covers rows where the column is populated
+        #     (the modern path — captured at write time).
+        #   * Legacy rows (cost_usd IS NULL) are pulled separately and run
+        #     through `estimate_cost_from_messages` so the dashboard total
+        #     matches the previous behaviour exactly. Almost always empty
+        #     in production.
+        agg_q = select(
+            func.count(AgentInteraction.id).label("total_queries"),
+            func.count(func.distinct(AgentInteraction.thread_id)).label("sessions"),
+            func.count(func.distinct(AgentInteraction.user_id)).label("unique_users"),
+            func.sum(
+                case((AgentInteraction.status == "hard_error", 1), else_=0)
+            ).label("hard"),
+            func.sum(
+                case((AgentInteraction.status == "soft_error", 1), else_=0)
+            ).label("soft"),
+            func.coalesce(func.sum(AgentInteraction.cost_usd), 0.0).label("captured_cost"),
+            func.avg(AgentInteraction.latency_ms).label("avg_latency"),
+            func.avg(AgentInteraction.llm_ms).label("avg_llm"),
+            func.avg(AgentInteraction.exec_ms).label("avg_exec"),
+            func.avg(AgentInteraction.total_tokens).label("avg_tokens"),
+            func.coalesce(func.sum(AgentInteraction.total_tokens), 0).label("sum_tokens"),
+        )
+        if where is not None:
+            agg_q = agg_q.where(where)
+        agg = session.execute(agg_q).one()
+
+        total_queries = int(agg.total_queries or 0)
+        sessions_count = int(agg.sessions or 0)
+        unique_users = int(agg.unique_users or 0)
+        hard = int(agg.hard or 0)
+        soft = int(agg.soft or 0)
         success = total_queries - hard - soft
         success_rate = (success / total_queries) if total_queries else 0.0
-        total_cost = round(sum(_row_cost(r) for r in rows), 6)
+        captured_cost = float(agg.captured_cost or 0.0)
+
+        # Legacy rows fall back to a token-count estimate. We only need the
+        # three columns the estimator reads, so this is small even at scale.
+        legacy_q = select(
+            AgentInteraction.model,
+            AgentInteraction.user_message,
+            AgentInteraction.assistant_message,
+        ).where(AgentInteraction.cost_usd.is_(None))
+        if where is not None:
+            legacy_q = legacy_q.where(where)
+        legacy_cost = 0.0
+        for model, um, am in session.execute(legacy_q).all():
+            legacy_cost += estimate_cost_from_messages(model, um or "", am or "")
+
+        total_cost = round(captured_cost + legacy_cost, 6)
         avg_cost = round((total_cost / total_queries), 6) if total_queries else 0.0
-
-        lat_vals = [r.latency_ms for r in rows if r.latency_ms is not None]
-        llm_vals = [r.llm_ms for r in rows if r.llm_ms is not None]
-        exec_vals = [r.exec_ms for r in rows if r.exec_ms is not None]
-        tok_vals = [r.total_tokens for r in rows if r.total_tokens]
-
-        avg_latency = (sum(lat_vals) / len(lat_vals)) if lat_vals else None
-        avg_llm = (sum(llm_vals) / len(llm_vals)) if llm_vals else None
-        avg_exec = (sum(exec_vals) / len(exec_vals)) if exec_vals else None
-        avg_tokens = (sum(tok_vals) / len(tok_vals)) if tok_vals else None
+        avg_latency = float(agg.avg_latency) if agg.avg_latency is not None else None
+        avg_llm = float(agg.avg_llm) if agg.avg_llm is not None else None
+        avg_exec = float(agg.avg_exec) if agg.avg_exec is not None else None
+        avg_tokens = float(agg.avg_tokens) if agg.avg_tokens is not None else None
+        sum_tokens = int(agg.sum_tokens or 0)
         blended = None
-        total_tokens = sum(tok_vals) if tok_vals else 0
-        if total_tokens > 0 and total_cost > 0:
-            blended = round(total_cost / (total_tokens / 1_000_000.0), 4)
+        if sum_tokens > 0 and total_cost > 0:
+            blended = round(total_cost / (sum_tokens / 1_000_000.0), 4)
 
-        # Top recurring errors — group by error_type, with the most common detail snippet.
-        err_groups: dict[str, dict[str, Any]] = {}
-        for r in rows:
-            if r.status == "success" or not r.error_type:
-                continue
-            g = err_groups.setdefault(r.error_type, {"count": 0, "samples": {}})
-            g["count"] += 1
-            d = (r.error_detail or "").strip()
-            if d:
-                g["samples"][d] = g["samples"].get(d, 0) + 1
-        top_errors = []
-        for et, info in sorted(err_groups.items(), key=lambda kv: kv[1]["count"], reverse=True)[:8]:
-            samples: dict[str, int] = info["samples"]
-            sample_detail = max(samples, key=samples.get) if samples else None
-            top_errors.append(TopError(error_type=et, count=int(info["count"]), sample_detail=sample_detail))
+        # ------- Top recurring errors (GROUP BY in SQL, top-8) -------
+        err_q = (
+            select(
+                AgentInteraction.error_type,
+                func.count(AgentInteraction.id).label("c"),
+            )
+            .where(AgentInteraction.error_type.is_not(None))
+            .where(AgentInteraction.status != "success")
+            .group_by(AgentInteraction.error_type)
+            .order_by(func.count(AgentInteraction.id).desc())
+            .limit(8)
+        )
+        if where is not None:
+            err_q = err_q.where(where)
+        err_groups = session.execute(err_q).all()
+
+        top_errors: list[TopError] = []
+        for et, count in err_groups:
+            # Pull a representative detail string *within the active filter
+            # window* so the sample matches the rest of the dashboard. Cheap
+            # — one indexed lookup per top error, max 8.
+            sample_q = (
+                select(AgentInteraction.error_detail)
+                .where(AgentInteraction.error_type == et)
+                .where(AgentInteraction.error_detail.is_not(None))
+                .limit(1)
+            )
+            if where is not None:
+                sample_q = sample_q.where(where)
+            sample = session.execute(sample_q).scalar()
+            top_errors.append(TopError(error_type=et, count=int(count), sample_detail=sample))
+
+        # ------- Response-time trend buckets -------
+        # We still pull just the rows we need (created_at + latency_ms) and
+        # bucket in Python — this is far cheaper than the previous full-row
+        # load and keeps date-bucketing portable across SQLite/Postgres.
+        trend_q = select(
+            AgentInteraction.created_at,
+            AgentInteraction.latency_ms,
+            AgentInteraction.total_tokens,
+            AgentInteraction.cost_usd,
+        )
+        if where is not None:
+            trend_q = trend_q.where(where)
+        trend_rows = session.execute(trend_q).all()
+
+        buckets: dict[str, dict[str, float]] = {}
+        for created_at, latency_ms, total_tok, cost in trend_rows:
+            key = _bucket_key(created_at, granularity)
+            b = buckets.setdefault(
+                key, {"q": 0.0, "lat": 0.0, "lat_n": 0.0, "tok": 0.0, "tok_n": 0.0, "cost": 0.0}
+            )
+            b["q"] += 1
+            if latency_ms is not None:
+                b["lat"] += float(latency_ms)
+                b["lat_n"] += 1
+            if total_tok:
+                b["tok"] += float(total_tok)
+                b["tok_n"] += 1
+            if cost is not None:
+                b["cost"] += float(cost)
+        trend = [
+            TrendPoint(
+                bucket=key,
+                queries=int(b["q"]),
+                avg_latency_ms=(b["lat"] / b["lat_n"]) if b["lat_n"] else None,
+                avg_tokens=(b["tok"] / b["tok_n"]) if b["tok_n"] else None,
+                total_cost_usd=round(b["cost"], 6),
+            )
+            for key, b in sorted(buckets.items())
+        ]
 
         return SummaryResponse(
             total_queries=total_queries,
-            sessions=sessions,
+            sessions=sessions_count,
             unique_users=unique_users,
             success_rate=success_rate,
             hard_errors=hard,
@@ -371,21 +470,35 @@ def summary(
             avg_tokens=avg_tokens,
             blended_per_million=blended,
             top_errors=top_errors,
-            response_time_trend=_agg_trends(rows, granularity),
+            response_time_trend=trend,
         )
     finally:
         session.close()
 
 
-@router.get("/users", response_model=UsersResponse)
-def users(
+@router.get("/summary", response_model=SummaryResponse)
+def summary(
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = Query(default=None),
     status: StatusFilter = Query(default="all"),
     error_type: str | None = Query(default=None),
     user_id: str | None = Query(default=None),
     feedback: FeedbackFilter = Query(default="all"),
+    granularity: Literal["daily", "weekly", "monthly"] = Query(default="daily"),
     _admin: str = Depends(require_admin),
+) -> SummaryResponse:
+    """Top-of-page KPIs + Top Recurring Errors + Response Time Trend."""
+    return _compute_summary(from_, to, status, error_type, user_id, feedback, granularity)
+
+
+@ttl_cache(ttl=_ANALYTICS_TTL, namespace="analytics.users")
+def _compute_users(
+    from_: str | None,
+    to: str | None,
+    status: StatusFilter,
+    error_type: str | None,
+    user_id: str | None,
+    feedback: FeedbackFilter,
 ) -> UsersResponse:
     session = _session()
     try:
@@ -451,6 +564,20 @@ def users(
         )
     finally:
         session.close()
+
+
+@router.get("/users", response_model=UsersResponse)
+def users(
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    status: StatusFilter = Query(default="all"),
+    error_type: str | None = Query(default=None),
+    user_id: str | None = Query(default=None),
+    feedback: FeedbackFilter = Query(default="all"),
+    _admin: str = Depends(require_admin),
+) -> UsersResponse:
+    """Per-user activity table. Cached for `_ANALYTICS_TTL` seconds."""
+    return _compute_users(from_, to, status, error_type, user_id, feedback)
 
 
 @router.get("/turns", response_model=TurnsResponse)
@@ -534,16 +661,15 @@ def turns(
         session.close()
 
 
-@router.get("/sessions", response_model=SessionsResponse)
-def sessions(
-    from_: str | None = Query(default=None, alias="from"),
-    to: str | None = Query(default=None),
-    status: StatusFilter = Query(default="all"),
-    error_type: str | None = Query(default=None),
-    user_id: str | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=200),
-    _admin: str = Depends(require_admin),
+@ttl_cache(ttl=_ANALYTICS_TTL, namespace="analytics.sessions")
+def _compute_sessions(
+    from_: str | None,
+    to: str | None,
+    status: StatusFilter,
+    error_type: str | None,
+    user_id: str | None,
+    page: int,
+    page_size: int,
 ) -> SessionsResponse:
     session = _session()
     try:
@@ -592,12 +718,27 @@ def sessions(
             )
             for tid, g in groups.items()
         ]
-        rows_out.sort(key=lambda r: r.last_active or dt.datetime.min, reverse=True)
+        rows_out.sort(key=lambda r: r.last_active or dt.datetime.min.replace(tzinfo=dt.UTC), reverse=True)
         total = len(rows_out)
         start = (page - 1) * page_size
         return SessionsResponse(total=total, rows=rows_out[start : start + page_size])
     finally:
         session.close()
+
+
+@router.get("/sessions", response_model=SessionsResponse)
+def sessions(
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    status: StatusFilter = Query(default="all"),
+    error_type: str | None = Query(default=None),
+    user_id: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    _admin: str = Depends(require_admin),
+) -> SessionsResponse:
+    """Per-thread session table. Cached for `_ANALYTICS_TTL` seconds."""
+    return _compute_sessions(from_, to, status, error_type, user_id, page, page_size)
 
 
 @router.get("/sessions/{thread_id}", response_model=SessionDetailResponse)
@@ -650,6 +791,60 @@ def session_detail(
         session.close()
 
 
+@ttl_cache(ttl=_ANALYTICS_TTL, namespace="analytics.trends")
+def _compute_trends(
+    from_: str | None,
+    to: str | None,
+    status: StatusFilter,
+    error_type: str | None,
+    user_id: str | None,
+    granularity: str,
+) -> TrendsResponse:
+    session = _session()
+    try:
+        clauses = _common_filters(_parse_dt(from_), _parse_dt(to), status, error_type, user_id, "all")
+        # Pull just the columns we actually use for bucketing (cheaper than
+        # hydrating full ORM objects).
+        cols_q = select(
+            AgentInteraction.created_at,
+            AgentInteraction.latency_ms,
+            AgentInteraction.total_tokens,
+            AgentInteraction.cost_usd,
+        )
+        if clauses:
+            cols_q = cols_q.where(and_(*clauses))
+        cols_rows = session.execute(cols_q).all()
+
+        buckets: dict[str, dict[str, float]] = {}
+        for created_at, latency_ms, total_tok, cost in cols_rows:
+            key = _bucket_key(created_at, granularity)
+            b = buckets.setdefault(
+                key, {"q": 0.0, "lat": 0.0, "lat_n": 0.0, "tok": 0.0, "tok_n": 0.0, "cost": 0.0}
+            )
+            b["q"] += 1
+            if latency_ms is not None:
+                b["lat"] += float(latency_ms)
+                b["lat_n"] += 1
+            if total_tok:
+                b["tok"] += float(total_tok)
+                b["tok_n"] += 1
+            if cost is not None:
+                b["cost"] += float(cost)
+        points = [
+            TrendPoint(
+                bucket=key,
+                queries=int(b["q"]),
+                avg_latency_ms=(b["lat"] / b["lat_n"]) if b["lat_n"] else None,
+                avg_tokens=(b["tok"] / b["tok_n"]) if b["tok_n"] else None,
+                total_cost_usd=round(b["cost"], 6),
+            )
+            for key, b in sorted(buckets.items())
+        ]
+        return TrendsResponse(granularity=granularity, points=points)
+    finally:
+        session.close()
+
+
 @router.get("/trends", response_model=TrendsResponse)
 def trends(
     from_: str | None = Query(default=None, alias="from"),
@@ -660,15 +855,8 @@ def trends(
     granularity: Literal["daily", "weekly", "monthly"] = Query(default="daily"),
     _admin: str = Depends(require_admin),
 ) -> TrendsResponse:
-    session = _session()
-    try:
-        clauses = _common_filters(_parse_dt(from_), _parse_dt(to), status, error_type, user_id, "all")
-        rows: list[AgentInteraction] = list(
-            session.execute(select(AgentInteraction).where(and_(*clauses)) if clauses else select(AgentInteraction)).scalars()
-        )
-        return TrendsResponse(granularity=granularity, points=_agg_trends(rows, granularity))
-    finally:
-        session.close()
+    """Time-bucketed trend series. Cached for `_ANALYTICS_TTL` seconds."""
+    return _compute_trends(from_, to, status, error_type, user_id, granularity)
 
 
 @router.get("/export.csv")

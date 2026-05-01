@@ -24,7 +24,7 @@ import { MobileDrawer } from "@/components/MobileDrawer";
 import { CommandPalette } from "@/components/CommandPalette";
 import { useToast } from "@/components/Toaster";
 import { cn } from "@/lib/cn";
-import { useRecents, useSettings } from "@/lib/stores";
+import { useRecents, useSessionFeedback, useSettings } from "@/lib/stores";
 import {
   clearStoredActiveSession,
   readStoredActiveSession,
@@ -208,6 +208,9 @@ export default function Home() {
     clearStoredActiveSession();
     streamAccumRef.current = "";
     streamThreadIdRef.current = null;
+    // Wipe the session 👍 / 👎 counter so the Feedback sheet doesn't show
+    // reactions from the previous conversation.
+    useSessionFeedback.getState().reset();
     setStreaming(false);
     setThreadId(null);
     setTranscript([]);
@@ -554,7 +557,6 @@ export default function Home() {
           onClear={newChat}
           onExport={exportChat}
           onSettings={() => setSettingsOpen(true)}
-          onCommand={() => setPaletteOpen(true)}
         />
 
         <section className="relative flex min-h-0 flex-1 flex-col">

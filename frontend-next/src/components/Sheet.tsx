@@ -43,20 +43,22 @@ export function Sheet({
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             transition={{ duration: 0.26, ease: [0.2, 0.7, 0.2, 1] }}
-            className="fixed right-3 top-3 bottom-3 z-30 flex w-[min(420px,calc(100vw-24px))] flex-col overflow-hidden rounded-[18px] border border-[var(--stroke)] bg-[var(--glass-2)] shadow-[var(--shadow-1)] backdrop-blur-md"
+            className="fixed right-3 top-3 bottom-3 z-30 flex w-[min(440px,calc(100vw-24px))] flex-col overflow-hidden rounded-[18px] border border-[var(--stroke-2)] bg-[var(--panel)] shadow-[var(--shadow-2)] ring-inset-soft"
           >
-            <header className="flex items-center justify-between border-b border-[var(--stroke)] px-3.5 py-3">
-              <div className="font-extrabold">{title}</div>
+            <header className="flex items-center justify-between border-b border-[var(--stroke)] px-4 py-3">
+              <div className="text-[14px] font-extrabold tracking-tight">
+                {title}
+              </div>
               <button
                 type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--stroke)] hover:bg-white/5"
+                className="grid h-9 w-9 place-items-center rounded-[10px] text-[var(--muted)] transition-colors hover:bg-[var(--hover-soft)] hover:text-[var(--text)]"
               >
                 <X size={14} />
               </button>
             </header>
-            <div className="scroll-area overflow-auto p-3.5">{children}</div>
+            <div className="scroll-area flex-1 overflow-auto p-4">{children}</div>
           </motion.aside>
         </>
       )}

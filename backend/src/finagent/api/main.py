@@ -69,10 +69,40 @@ def _ensure_agent_interactions_columns() -> None:
             conn.execute(text(f"ALTER TABLE agent_interactions ADD COLUMN IF NOT EXISTS {name} {ddl}"))
 
 
+# Indexes that materially speed up the analytics dashboard queries. Declared
+# here (vs. on the model) so we can apply them to existing demo databases
+# without an Alembic migration. CREATE INDEX IF NOT EXISTS makes this idempotent.
+_ANALYTICS_INDEXES: tuple[tuple[str, str, str], ...] = (
+    # Most filter & ordering paths key off created_at — the single biggest win.
+    ("ix_agent_interactions_created_at", "agent_interactions", "(created_at DESC)"),
+    # status filter + group-by-status aggregations on /summary.
+    ("ix_agent_interactions_status", "agent_interactions", "(status)"),
+    # error_type filter + group-by for top-recurring-errors panel.
+    ("ix_agent_interactions_error_type", "agent_interactions", "(error_type)"),
+    # Composite for the (user_id, created_at desc) pattern on /users.
+    ("ix_agent_interactions_user_created", "agent_interactions", "(user_id, created_at DESC)"),
+    # Composite for the (thread_id, created_at) pattern on /sessions and detail.
+    ("ix_agent_interactions_thread_created", "agent_interactions", "(thread_id, created_at)"),
+)
+
+
+def _ensure_analytics_indexes() -> None:
+    """Create supporting indexes on `agent_interactions` if missing. Postgres
+    parses `CREATE INDEX IF NOT EXISTS` natively; SQLite does too. The DDL
+    runs idempotently so it's safe across every restart."""
+    inspector = inspect(engine)
+    if "agent_interactions" not in inspector.get_table_names():
+        return
+    with engine.begin() as conn:
+        for name, table, columns in _ANALYTICS_INDEXES:
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} {columns}"))
+
+
 @app.on_event("startup")
 def _startup() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_agent_interactions_columns()
+    _ensure_analytics_indexes()
 
 
 @app.middleware("http")
