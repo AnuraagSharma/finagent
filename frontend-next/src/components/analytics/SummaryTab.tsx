@@ -26,8 +26,11 @@ export function SummaryTab({
   loading: boolean;
   onPickUser?: (userId: string) => void;
 }) {
-  if (!data && loading) return <SkeletonGrid />;
-  if (!data) return <Empty />;
+  // Treat "no data yet" as still loading — the parent always fetches on mount,
+  // so a null `data` means the fetch is in flight (or about to start), never a
+  // genuinely empty result. The KPI/chart panels handle truly-empty fields
+  // (e.g. zero queries) with their own per-panel ChartEmpty placeholders.
+  if (!data) return <SkeletonGrid />;
 
   const successPct = `${(data.success_rate * 100).toFixed(1)}%`;
   const tokens = data.avg_tokens
@@ -285,11 +288,3 @@ function SkeletonGrid() {
   );
 }
 
-function Empty() {
-  return (
-    <div className="flex flex-col items-center justify-center rounded-[14px] border border-dashed border-[var(--stroke)] bg-[var(--glass)] px-6 py-20 text-center text-[var(--muted-2)]">
-      <div className="text-[14px] font-semibold">No data in this window</div>
-      <div className="mt-1 text-[12.5px]">Run a few chats to populate analytics.</div>
-    </div>
-  );
-}

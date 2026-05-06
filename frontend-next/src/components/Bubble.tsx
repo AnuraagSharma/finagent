@@ -2,9 +2,10 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { Markdown } from "./Markdown";
+import { postFeedback } from "@/lib/api";
 import { renderMarkdownLite } from "@/lib/markdown";
 import { cn } from "@/lib/cn";
-import { useSessionFeedback } from "@/lib/stores";
+import { useSessionFeedback, useSettings } from "@/lib/stores";
 import { useToast } from "./Toaster";
 import { Tooltip } from "./Tooltip";
 import { useEffect, useRef, useState } from "react";
@@ -47,6 +48,11 @@ type Props = {
   meta?: string;
   /** Optional snapshot of the turn that produced this assistant message. */
   summary?: TurnSummary;
+  /** DB id of the agent_interactions row this message came from. Required
+   * for the feedback POST to be able to link back to the right turn — when
+   * absent (e.g. messages restored from before this field was wired), the
+   * feedback buttons become disabled. */
+  interactionId?: number;
   onRegenerate?: () => void;
   onFollowup?: () => void;
 };
@@ -207,9 +213,10 @@ function IconAction({
   );
 }
 
-export function Bubble({ role, text, meta, summary, onRegenerate, onFollowup }: Props) {
+export function Bubble({ role, text, meta, summary, interactionId, onRegenerate, onFollowup }: Props) {
   const isAssistant = role === "assistant";
   const show = useToast((s) => s.show);
+  const { backendUrl, userId } = useSettings();
   const [copied, setCopied] = useState(false);
 
   /**
@@ -281,12 +288,41 @@ export function Bubble({ role, text, meta, summary, onRegenerate, onFollowup }: 
     );
   }
 
-  function submitFeedback() {
+  async function submitFeedback() {
     if (!feedbackOpen || feedbackSent) return;
-    // Future: POST { kind: feedbackOpen, tags, comment, message: text } to /v1/feedback.
-    // For now we just persist locally and acknowledge inline.
+    if (!interactionId) {
+      // Older messages persisted before the SSE `done` event carried the
+      // interaction id can't be linked to a row. Surface that instead of
+      // silently swallowing the click.
+      show("Can't save feedback for this message — try a new one.");
+      return;
+    }
+    // Tags + free-text combine into the single `comment` column on the DB
+    // — the backend doesn't have a tags table, so prefix tags inline so
+    // they're searchable from analytics later.
+    const tagPrefix =
+      feedbackTags.length > 0 ? `[${feedbackTags.join(", ")}] ` : "";
+    const commentText = `${tagPrefix}${feedbackComment.trim()}`.trim();
     setFeedbackSent(true);
-    show("Thanks for the feedback.");
+    try {
+      await postFeedback({
+        backendUrl,
+        userId,
+        interactionId,
+        kind: feedbackOpen,
+        comment: commentText || undefined,
+      });
+      show("Thanks for the feedback.");
+    } catch (e: unknown) {
+      // Roll back the "sent" state so the user can retry — and roll back
+      // the local session counter so the dashboard's session reaction tally
+      // stays accurate.
+      setFeedbackSent(false);
+      bumpReaction(feedbackOpen, -1);
+      const msg = (e as { message?: string })?.message || "Couldn't save feedback.";
+      show(msg);
+      return;
+    }
     // Auto-close shortly so the action row settles back to a clean state.
     setTimeout(() => setFeedbackOpen(null), 900);
   }

@@ -5,7 +5,7 @@ export type StreamHooks = {
   onStep?: (e: StepEvent) => void;
   onTodos?: (items: TodoItem[]) => void;
   onToken?: (text: string) => void;
-  onDone?: (e: { thread_id: string; ms: number }) => void;
+  onDone?: (e: { thread_id: string; ms: number; interaction_id?: number }) => void;
   onError?: (msg: string) => void;
   /** Fetch was aborted (user clicked Stop or navigated away). */
   onAbort?: () => void;
@@ -83,7 +83,9 @@ export function streamAgent({
               hooks.onToken?.((evt as { text?: string }).text || "");
               break;
             case "done":
-              hooks.onDone?.(evt as { thread_id: string; ms: number });
+              hooks.onDone?.(
+                evt as { thread_id: string; ms: number; interaction_id?: number }
+              );
               break;
             case "error":
               hooks.onError?.(
@@ -212,6 +214,12 @@ export type AnalyticsUsers = {
   users: UserActivityRow[];
 };
 
+export type FeedbackEntry = {
+  kind: "like" | "dislike";
+  comment: string | null;
+  created_at: string;
+};
+
 export type TurnRow = {
   id: number;
   created_at: string;
@@ -234,6 +242,9 @@ export type TurnRow = {
   model: string;
   likes: number;
   dislikes: number;
+  // Older backend versions may omit `feedback` — treat as optional so this
+  // file stays compatible with deployments that haven't been updated.
+  feedback?: FeedbackEntry[];
 };
 
 export type AnalyticsTurns = {
@@ -268,6 +279,26 @@ export type AnalyticsSessionDetail = {
 export type AnalyticsTrends = {
   granularity: "daily" | "weekly" | "monthly";
   points: TrendPoint[];
+};
+
+export type FeedbackItem = {
+  id: number;
+  created_at: string;
+  user_id: string;
+  kind: "like" | "dislike";
+  comment: string | null;
+  interaction_id: number;
+  thread_id: string;
+  user_message: string;
+  assistant_message: string;
+  interaction_created_at: string;
+};
+
+export type AnalyticsFeedback = {
+  total: number;
+  page: number;
+  page_size: number;
+  rows: FeedbackItem[];
 };
 
 async function fetchJson<T>(
@@ -414,6 +445,36 @@ export function getAnalyticsTrends({
 }): Promise<AnalyticsTrends> {
   const url = withFilters(base(backendUrl, "v1/analytics/trends"), filters);
   if (granularity) url.searchParams.set("granularity", granularity);
+  return fetchJson(url, userId, { signal });
+}
+
+export function getAnalyticsFeedback({
+  backendUrl,
+  userId,
+  filters,
+  kind,
+  page,
+  pageSize,
+  signal,
+}: {
+  backendUrl: string;
+  userId: string;
+  // We only honour the `from`, `to`, and `userId` filters here — the other
+  // status / errorType filters live on the interaction, which would
+  // contradict the "this comment was given today" framing of the tab.
+  filters?: Pick<AnalyticsFilters, "from" | "to" | "userId">;
+  kind?: "all" | "like" | "dislike";
+  page?: number;
+  pageSize?: number;
+  signal?: AbortSignal;
+}): Promise<AnalyticsFeedback> {
+  const url = base(backendUrl, "v1/analytics/feedback");
+  if (filters?.from) url.searchParams.set("from", filters.from);
+  if (filters?.to) url.searchParams.set("to", filters.to);
+  if (filters?.userId) url.searchParams.set("user_id", filters.userId);
+  if (kind && kind !== "all") url.searchParams.set("kind", kind);
+  if (page) url.searchParams.set("page", String(page));
+  if (pageSize) url.searchParams.set("page_size", String(pageSize));
   return fetchJson(url, userId, { signal });
 }
 

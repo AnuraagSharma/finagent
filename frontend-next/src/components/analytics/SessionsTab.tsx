@@ -18,8 +18,8 @@ export function SessionsTab({
   loading: boolean;
   onPick: (row: SessionRow) => void;
 }) {
-  if (!data && loading) return <div className="skeleton h-[400px] w-full rounded-[14px]" />;
-  if (!data) return null;
+  // `data === null` means the fetch is in flight — show the skeleton.
+  if (!data) return <div className="skeleton h-[400px] w-full rounded-[14px]" />;
 
   return (
     <section className="overflow-hidden rounded-[14px] border border-[var(--stroke)] bg-[var(--glass)]">

@@ -270,11 +270,12 @@ export default function Home() {
   function pushAssistantFinal(
     text: string,
     meta?: string,
-    summary?: TurnSummary
+    summary?: TurnSummary,
+    interactionId?: number
   ) {
     setTranscript((prev) => [
       ...prev,
-      { role: "assistant", text, ts: Date.now(), summary },
+      { role: "assistant", text, ts: Date.now(), summary, interactionId },
     ]);
     setStreamingText("");
     setStreamingMeta(meta || null);
@@ -439,7 +440,7 @@ export default function Home() {
           }
           show("Stopped.");
         },
-        onDone: ({ thread_id, ms }) => {
+        onDone: ({ thread_id, ms, interaction_id }) => {
           if (epoch !== streamEpochRef.current) return;
           if (thread_id) setThreadId(thread_id);
           const took = ms ?? Math.round(performance.now() - startedAt);
@@ -470,7 +471,12 @@ export default function Home() {
                   ms: took,
                 }
               : undefined;
-          pushAssistantFinal(finalText, `${thread_id} • ${took}ms`, summary);
+          pushAssistantFinal(
+            finalText,
+            `${thread_id} • ${took}ms`,
+            summary,
+            interaction_id
+          );
 
           if (thread_id) {
             const titleMsg =
@@ -578,6 +584,7 @@ export default function Home() {
                       role={m.role}
                       text={m.text}
                       summary={m.summary}
+                      interactionId={m.interactionId}
                       onRegenerate={isLastAssistant ? regenerateLast : undefined}
                       onFollowup={isLastAssistant ? followupHint : undefined}
                     />

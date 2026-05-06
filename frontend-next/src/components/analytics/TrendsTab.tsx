@@ -24,7 +24,9 @@ export function TrendsTab({
   granularity: "daily" | "weekly" | "monthly";
   onChangeGranularity: (g: "daily" | "weekly" | "monthly") => void;
 }) {
-  if (!data && loading) {
+  // `data === null` means the fetch is in flight — show the skeleton instead
+  // of flashing a blank state.
+  if (!data) {
     return (
       <div className="flex flex-col gap-4">
         <div className="skeleton h-9 w-full rounded-[10px]" />
@@ -37,7 +39,6 @@ export function TrendsTab({
       </div>
     );
   }
-  if (!data) return null;
 
   const points = data.points;
   const hasData = points.length > 0;

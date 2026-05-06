@@ -25,7 +25,9 @@ export function UsersTab({
 }) {
   const [mode, setMode] = useState<Mode>("questions");
 
-  if (!data && loading) {
+  // `data === null` always means the fetch is in flight (or about to start),
+  // so show the skeleton instead of flashing a blank state.
+  if (!data) {
     return (
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
@@ -34,7 +36,6 @@ export function UsersTab({
       </div>
     );
   }
-  if (!data) return null;
 
   const sorted = [...data.users].sort((a, b) =>
     mode === "cost"

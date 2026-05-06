@@ -21,6 +21,11 @@ export type ChatMessage = {
   ts: number;
   /** Only assistant messages carry a summary. Live during streaming, snapshot at done. */
   summary?: TurnSummary;
+  /** DB id of the underlying agent_interactions row — set on assistant messages
+   * when the SSE `done` event arrives, used as the `interaction_id` payload
+   * when the user clicks like / dislike. Undefined for old messages persisted
+   * before this field existed (their feedback button stays disabled). */
+  interactionId?: number;
 };
 
 export type StepEvent = {

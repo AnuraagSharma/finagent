@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { FeedbackTab } from "@/components/analytics/FeedbackTab";
 import { Filters } from "@/components/analytics/Filters";
 import { SessionDetailDrawer } from "@/components/analytics/SessionDetailDrawer";
 import { SessionsTab } from "@/components/analytics/SessionsTab";
@@ -25,12 +26,14 @@ import { cn } from "@/lib/cn";
 import { writeStoredActiveSession, clearStoredActiveSession } from "@/lib/activeSession";
 import {
   exportAnalyticsCsvUrl,
+  getAnalyticsFeedback,
   getAnalyticsSessionDetail,
   getAnalyticsSessions,
   getAnalyticsSummary,
   getAnalyticsTrends,
   getAnalyticsTurns,
   getAnalyticsUsers,
+  type AnalyticsFeedback,
   type AnalyticsFilters,
   type AnalyticsSessionDetail,
   type AnalyticsSessions,
@@ -44,7 +47,8 @@ import {
 import { useSettings } from "@/lib/stores";
 import { useDebounced } from "@/lib/useDebounced";
 
-type Tab = "summary" | "users" | "turns" | "sessions" | "trends";
+type Tab = "summary" | "users" | "turns" | "sessions" | "trends" | "feedback";
+type FeedbackKind = "all" | "like" | "dislike";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "summary", label: "Summary" },
@@ -52,6 +56,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "turns", label: "Turn Logs" },
   { id: "sessions", label: "Sessions" },
   { id: "trends", label: "Trend Analysis" },
+  { id: "feedback", label: "Feedback" },
 ];
 
 /**
@@ -156,13 +161,30 @@ function AnalyticsPageInner() {
   const [turns, setTurns] = useState<AnalyticsTurns | null>(null);
   const [sessions, setSessions] = useState<AnalyticsSessions | null>(null);
   const [trends, setTrends] = useState<AnalyticsTrends | null>(null);
+  const [feedback, setFeedback] = useState<AnalyticsFeedback | null>(null);
 
-  const [loading, setLoading] = useState<Record<Tab, boolean>>({
-    summary: false,
-    users: false,
-    turns: false,
-    sessions: false,
-    trends: false,
+  // Feedback tab has its own kind filter (all / like / dislike) and pager
+  // — kept separate so flipping back doesn't reset position.
+  const [feedbackKind, setFeedbackKind] = useState<FeedbackKind>(() =>
+    normalizeFeedbackKind(search.get("fbk"))
+  );
+  const [feedbackPage, setFeedbackPage] = useState<number>(() =>
+    Math.max(1, Number(search.get("fbp")) || 1)
+  );
+
+  // The active tab on first mount will fetch immediately — start it as
+  // `loading: true` so the skeleton shows on the very first render instead
+  // of briefly flashing the "no data" state before the effect fires.
+  const [loading, setLoading] = useState<Record<Tab, boolean>>(() => {
+    const initialTab = normalizeTab(search.get("tab"));
+    return {
+      summary: initialTab === "summary",
+      users: initialTab === "users",
+      turns: initialTab === "turns",
+      sessions: initialTab === "sessions",
+      trends: initialTab === "trends",
+      feedback: initialTab === "feedback",
+    };
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -189,8 +211,10 @@ function AnalyticsPageInner() {
     if (page !== 1) sp.set("p", String(page));
     if (sort !== "created_at") sp.set("sort", sort);
     if (direction !== "desc") sp.set("dir", direction);
+    if (feedbackKind !== "all") sp.set("fbk", feedbackKind);
+    if (feedbackPage !== 1) sp.set("fbp", String(feedbackPage));
     router.replace(`/analytics?${sp.toString()}`, { scroll: false });
-  }, [tab, filters, granularity, page, sort, direction, router]);
+  }, [tab, filters, granularity, page, sort, direction, feedbackKind, feedbackPage, router]);
 
   useEffect(() => {
     writeUrl();
@@ -223,9 +247,19 @@ function AnalyticsPageInner() {
           return `${common}|p=1`;
         case "users":
           return common;
+        case "feedback":
+          // Feedback tab only honours from / to / userId from the global
+          // filter strip — see getAnalyticsFeedback in api.ts for why.
+          return [
+            f.from ?? "",
+            f.to ?? "",
+            f.userId ?? "",
+            `k=${feedbackKind}`,
+            `p=${feedbackPage}`,
+          ].join("|");
       }
     },
-    [debouncedFilters, granularity, page, sort, direction]
+    [debouncedFilters, granularity, page, sort, direction, feedbackKind, feedbackPage]
   );
   const lastLoadedRef = useRef<Partial<Record<Tab, string>>>({});
 
@@ -303,6 +337,21 @@ function AnalyticsPageInner() {
             signal: opts.signal,
           });
           setTrends(d);
+        } else if (which === "feedback") {
+          const d = await getAnalyticsFeedback({
+            backendUrl,
+            userId,
+            filters: {
+              from: debouncedFilters.from,
+              to: debouncedFilters.to,
+              userId: debouncedFilters.userId,
+            },
+            kind: feedbackKind,
+            page: feedbackPage,
+            pageSize: 50,
+            signal: opts.signal,
+          });
+          setFeedback(d);
         }
         lastLoadedRef.current[which] = fp;
       } catch (e: unknown) {
@@ -323,6 +372,8 @@ function AnalyticsPageInner() {
       page,
       sort,
       direction,
+      feedbackKind,
+      feedbackPage,
       fingerprintForTab,
     ]
   );
@@ -493,6 +544,20 @@ function AnalyticsPageInner() {
                   type="button"
                   aria-current={active ? "page" : undefined}
                   onClick={() => {
+                    // If the tab we're moving to has no cached data yet, mark
+                    // it as loading synchronously so the skeleton appears on the
+                    // first render — otherwise we briefly flash the "no data"
+                    // state until the fetch effect fires.
+                    const cached =
+                      t.id === "summary" ? summary :
+                      t.id === "users" ? users :
+                      t.id === "turns" ? turns :
+                      t.id === "sessions" ? sessions :
+                      t.id === "trends" ? trends :
+                      feedback;
+                    if (cached === null) {
+                      setLoading((l) => ({ ...l, [t.id]: true }));
+                    }
                     setTab(t.id);
                     setPage(1);
                   }}
@@ -596,6 +661,44 @@ function AnalyticsPageInner() {
                 onChangeGranularity={setGranularity}
               />
             )}
+            {tab === "feedback" && (
+              <FeedbackTab
+                data={feedback}
+                loading={loading.feedback}
+                page={feedbackPage}
+                pageSize={50}
+                kind={feedbackKind}
+                onChangePage={setFeedbackPage}
+                onChangeKind={(k) => {
+                  setFeedbackKind(k);
+                  setFeedbackPage(1);
+                }}
+                onPickUser={(u) => setFilters((f) => ({ ...f, userId: u }))}
+                onPickThread={(threadId) => {
+                  // Jump into the session detail drawer when the user clicks
+                  // the thread chip — shows the full conversation that
+                  // produced this feedback.
+                  setDrawer({
+                    open: true,
+                    threadId,
+                    title: threadId,
+                    data: null,
+                    loading: true,
+                  });
+                  void getAnalyticsSessionDetail({
+                    backendUrl,
+                    userId,
+                    threadId,
+                  })
+                    .then((d) => setDrawer((s) => ({ ...s, data: d, loading: false })))
+                    .catch((e: unknown) => {
+                      const msg = (e as { message?: string })?.message || String(e);
+                      setError(`Couldn't load session: ${msg}`);
+                      setDrawer((s) => ({ ...s, loading: false }));
+                    });
+                }}
+              />
+            )}
           </div>
         </div>
       </main>
@@ -620,9 +723,17 @@ function AnalyticsPageInner() {
 }
 
 function normalizeTab(v: string | null): Tab {
-  return v === "users" || v === "turns" || v === "sessions" || v === "trends"
+  return v === "users" ||
+    v === "turns" ||
+    v === "sessions" ||
+    v === "trends" ||
+    v === "feedback"
     ? v
     : "summary";
+}
+
+function normalizeFeedbackKind(v: string | null): FeedbackKind {
+  return v === "like" || v === "dislike" ? v : "all";
 }
 
 function paramsToFilters(sp: URLSearchParams): AnalyticsFilters {

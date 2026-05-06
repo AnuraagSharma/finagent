@@ -41,8 +41,8 @@ export function TurnLogsTab({
 }) {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
-  if (!data && loading) return <div className="skeleton h-[400px] w-full rounded-[14px]" />;
-  if (!data) return null;
+  // `data === null` means the fetch is in flight — show the skeleton.
+  if (!data) return <div className="skeleton h-[400px] w-full rounded-[14px]" />;
 
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
 
@@ -170,16 +170,7 @@ export function TurnLogsTab({
                     {r.cost_usd != null ? `$${r.cost_usd.toFixed(4)}` : "—"}
                   </Td>
                   <Td align="right">
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex items-center gap-0.5 text-[var(--gain)]">
-                        <ThumbsUp size={11} />
-                        <span className="num text-[11.5px]">{r.likes}</span>
-                      </span>
-                      <span className="inline-flex items-center gap-0.5 text-[var(--loss)]">
-                        <ThumbsDown size={11} />
-                        <span className="num text-[11.5px]">{r.dislikes}</span>
-                      </span>
-                    </span>
+                    <FeedbackCell row={r} />
                   </Td>
                 </tr>
                 {expanded[r.id] && (
@@ -202,6 +193,47 @@ export function TurnLogsTab({
         </table>
       </div>
     </section>
+  );
+}
+
+/**
+ * Compact like/dislike pill for the row's Feedback column. The icon goes
+ * dim when its count is 0 — full colour when there's at least one signal —
+ * so a glance down the column tells you which turns actually got rated
+ * versus which are untouched. The expand row carries the comments.
+ */
+function FeedbackCell({ row }: { row: TurnRow }) {
+  const liked = row.likes > 0;
+  const disliked = row.dislikes > 0;
+  const hasComments = (row.feedback ?? []).some((f) => !!f.comment);
+  return (
+    <span className="inline-flex items-center gap-2" title={hasComments ? "Has comments — click to expand" : undefined}>
+      <span
+        className={cn(
+          "inline-flex items-center gap-0.5",
+          liked ? "font-bold text-[var(--gain)]" : "text-[var(--muted-3)]"
+        )}
+      >
+        <ThumbsUp size={11} strokeWidth={liked ? 2.5 : 2} />
+        <span className="num text-[11.5px]">{row.likes}</span>
+      </span>
+      <span
+        className={cn(
+          "inline-flex items-center gap-0.5",
+          disliked ? "font-bold text-[var(--loss)]" : "text-[var(--muted-3)]"
+        )}
+      >
+        <ThumbsDown size={11} strokeWidth={disliked ? 2.5 : 2} />
+        <span className="num text-[11.5px]">{row.dislikes}</span>
+      </span>
+      {hasComments && (
+        <span
+          aria-hidden
+          className="ml-0.5 inline-block h-1.5 w-1.5 rounded-full bg-[var(--accent)]"
+          title="Has comments"
+        />
+      )}
+    </span>
   );
 }
 
@@ -259,6 +291,49 @@ function ExpandedDetail({ row }: { row: TurnRow }) {
               {row.error_detail}
             </pre>
           )}
+        </div>
+      )}
+      {(row.feedback ?? []).length > 0 && (
+        <div className="md:col-span-2 rounded-[10px] border border-[var(--stroke)] bg-[var(--hover-soft)] p-3">
+          <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted-2)]">
+            Feedback ({(row.feedback ?? []).length})
+          </div>
+          <ul className="mt-1.5 flex flex-col gap-1.5">
+            {(row.feedback ?? []).map((f, i) => {
+              const liked = f.kind === "like";
+              return (
+                <li
+                  key={`${f.created_at}-${i}`}
+                  className="flex items-start gap-2 text-[12.5px] text-[var(--text)]"
+                >
+                  <span
+                    className={cn(
+                      "mt-0.5 inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-[11px] font-bold",
+                      liked
+                        ? "bg-[var(--gain)]/15 text-[var(--gain)]"
+                        : "bg-[var(--loss)]/15 text-[var(--loss)]"
+                    )}
+                  >
+                    {liked ? <ThumbsUp size={10} /> : <ThumbsDown size={10} />}
+                    {liked ? "Like" : "Dislike"}
+                  </span>
+                  <span className="flex-1 whitespace-pre-wrap break-words">
+                    {f.comment ? (
+                      f.comment
+                    ) : (
+                      <span className="text-[var(--muted-3)]">(no comment)</span>
+                    )}
+                  </span>
+                  <span
+                    className="num shrink-0 text-[10.5px] text-[var(--muted-3)]"
+                    title={absoluteTime(f.created_at)}
+                  >
+                    {relativeTime(f.created_at)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
       <div className="md:col-span-2">

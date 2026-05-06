@@ -182,6 +182,16 @@ class UsersResponse(BaseModel):
     users: list[UserActivityRow]
 
 
+class FeedbackEntry(BaseModel):
+    """One feedback row attached to a turn — used to surface comments in
+    the Turn Logs expand view (the aggregate `likes` / `dislikes` counts
+    on `TurnRow` already cover the badge display)."""
+
+    kind: str  # "like" | "dislike"
+    comment: str | None
+    created_at: dt.datetime
+
+
 class TurnRow(BaseModel):
     id: int
     created_at: dt.datetime
@@ -204,6 +214,10 @@ class TurnRow(BaseModel):
     model: str
     likes: int
     dislikes: int
+    # Per-turn feedback rows (kind + comment + when), oldest-first. Empty
+    # when no one has given feedback. Old API consumers that don't know
+    # about this field will simply ignore it.
+    feedback: list[FeedbackEntry] = []
 
 
 class TurnsResponse(BaseModel):
@@ -211,6 +225,30 @@ class TurnsResponse(BaseModel):
     page: int
     page_size: int
     rows: list[TurnRow]
+
+
+class FeedbackItem(BaseModel):
+    """One feedback row joined with the interaction it belongs to —
+    powers the dedicated Feedback tab so reviewers can read every
+    comment alongside the original question and answer."""
+
+    id: int
+    created_at: dt.datetime
+    user_id: str
+    kind: str  # "like" | "dislike"
+    comment: str | None
+    interaction_id: int
+    thread_id: str
+    user_message: str
+    assistant_message: str
+    interaction_created_at: dt.datetime
+
+
+class FeedbackResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    rows: list[FeedbackItem]
 
 
 class SessionRow(BaseModel):
@@ -297,6 +335,28 @@ def _feedback_counts(session: Session, interaction_ids: Iterable[int]) -> dict[i
             d["likes"] = int(count)
         elif kind == "dislike":
             d["dislikes"] = int(count)
+    return out
+
+
+def _feedback_details(
+    session: Session, interaction_ids: Iterable[int]
+) -> dict[int, list[FeedbackEntry]]:
+    """For a set of interaction ids, return {id: [FeedbackEntry, ...]} ordered
+    oldest-first. Used to surface the per-turn comment text in the Turn Logs
+    expand view; the cheaper `_feedback_counts` is still used for badge totals."""
+    ids = list(interaction_ids)
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(Feedback.interaction_id, Feedback.kind, Feedback.comment, Feedback.created_at)
+        .where(Feedback.interaction_id.in_(ids))
+        .order_by(Feedback.created_at.asc())
+    ).all()
+    out: dict[int, list[FeedbackEntry]] = {}
+    for iid, kind, comment, created_at in rows:
+        out.setdefault(int(iid), []).append(
+            FeedbackEntry(kind=str(kind), comment=comment, created_at=created_at)
+        )
     return out
 
 
@@ -625,6 +685,7 @@ def turns(
 
         ids = [r.id for r in page_rows]
         fb = _feedback_counts(session, ids)
+        fb_items = _feedback_details(session, ids)
 
         rows_out: list[TurnRow] = []
         for r in page_rows:
@@ -653,6 +714,7 @@ def turns(
                     model=r.model,
                     likes=counts["likes"],
                     dislikes=counts["dislikes"],
+                    feedback=fb_items.get(r.id, []),
                 )
             )
 
@@ -757,6 +819,7 @@ def session_detail(
             raise HTTPException(status_code=404, detail="thread not found")
         ids = [r.id for r in rows]
         fb = _feedback_counts(session, ids)
+        fb_items = _feedback_details(session, ids)
         turns_out: list[TurnRow] = []
         for r in rows:
             counts = fb.get(r.id, {"likes": 0, "dislikes": 0})
@@ -784,6 +847,7 @@ def session_detail(
                     model=r.model,
                     likes=counts["likes"],
                     dislikes=counts["dislikes"],
+                    feedback=fb_items.get(r.id, []),
                 )
             )
         return SessionDetailResponse(thread_id=thread_id, user_id=rows[0].user_id, turns=turns_out)
@@ -857,6 +921,94 @@ def trends(
 ) -> TrendsResponse:
     """Time-bucketed trend series. Cached for `_ANALYTICS_TTL` seconds."""
     return _compute_trends(from_, to, status, error_type, user_id, granularity)
+
+
+@ttl_cache(ttl=_ANALYTICS_TTL, namespace="analytics.feedback")
+def _compute_feedback(
+    from_: str | None,
+    to: str | None,
+    user_id: str | None,
+    kind: Literal["all", "like", "dislike"],
+    page: int,
+    page_size: int,
+) -> FeedbackResponse:
+    """Flat list of every feedback row joined with the interaction it
+    belongs to so the dashboard can show comments alongside the original
+    question and answer. Filters are applied to the *feedback* table
+    (when the comment was given, who gave it, kind) — not the interaction
+    table — so a like given today on a 3-day-old answer still shows up
+    for a "today" filter."""
+    session = _session()
+    try:
+        clauses: list[Any] = []
+        d_from = _parse_dt(from_)
+        d_to = _parse_dt(to)
+        if d_from:
+            clauses.append(Feedback.created_at >= d_from)
+        if d_to:
+            clauses.append(Feedback.created_at <= d_to)
+        if user_id:
+            clauses.append(Feedback.user_id == user_id)
+        if kind != "all":
+            clauses.append(Feedback.kind == kind)
+
+        # Total count for pager — count feedback rows, not interactions.
+        count_q = select(func.count()).select_from(Feedback)
+        if clauses:
+            count_q = count_q.where(and_(*clauses))
+        total = int(session.execute(count_q).scalar() or 0)
+
+        # Join feedback to its interaction so we can show the original
+        # question + answer for context. Feedback always has an
+        # `interaction_id` FK, so an inner join is safe.
+        base = select(Feedback, AgentInteraction).join(
+            AgentInteraction, Feedback.interaction_id == AgentInteraction.id
+        )
+        if clauses:
+            base = base.where(and_(*clauses))
+
+        page_rows = list(
+            session.execute(
+                base.order_by(Feedback.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+        )
+
+        rows_out: list[FeedbackItem] = []
+        for f, ai in page_rows:
+            rows_out.append(
+                FeedbackItem(
+                    id=int(f.id),
+                    created_at=f.created_at,
+                    user_id=f.user_id,
+                    kind=str(f.kind),
+                    comment=f.comment,
+                    interaction_id=int(f.interaction_id),
+                    thread_id=ai.thread_id,
+                    user_message=ai.user_message or "",
+                    assistant_message=ai.assistant_message or "",
+                    interaction_created_at=ai.created_at,
+                )
+            )
+        return FeedbackResponse(total=total, page=page, page_size=page_size, rows=rows_out)
+    finally:
+        session.close()
+
+
+@router.get("/feedback", response_model=FeedbackResponse)
+def feedback(
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    user_id: str | None = Query(default=None),
+    kind: Literal["all", "like", "dislike"] = Query(default="all"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    _admin: str = Depends(require_admin),
+) -> FeedbackResponse:
+    """Paginated list of feedback rows with their original question + answer.
+    Powers the Feedback tab on the dashboard."""
+    return _compute_feedback(from_, to, user_id, kind, page, page_size)
 
 
 @router.get("/export.csv")

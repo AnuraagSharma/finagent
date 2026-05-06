@@ -182,9 +182,14 @@ def _persist_interaction(
     status: str,
     error_type: str | None,
     error_detail: str | None,
-) -> None:
+) -> int | None:
     """Best-effort write of a turn into agent_interactions. Never raises — analytics
-    persistence must not fail user requests."""
+    persistence must not fail user requests.
+
+    Returns the saved row's primary key on success, or None if the write failed
+    (or analytics persistence is disabled). Callers thread this value back to
+    the client so feedback POSTs can later target the same interaction.
+    """
     from finagent.api.main import session_factory  # local import to avoid circulars
 
     pt = usage.get("prompt_tokens") or 0
@@ -194,30 +199,34 @@ def _persist_interaction(
 
     try:
         with session_scope(session_factory) as session:
-            session.add(
-                AgentInteraction(
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    user_message=user_message,
-                    assistant_message=assistant_message,
-                    latency_ms=latency_ms,
-                    model=model,
-                    prompt_tokens=pt or None,
-                    completion_tokens=ct or None,
-                    total_tokens=tt,
-                    cost_usd=cost,
-                    llm_ms=llm_ms,
-                    exec_ms=exec_ms,
-                    step_count=step_count,
-                    tool_count=tool_count,
-                    status=status,
-                    error_type=error_type,
-                    error_detail=error_detail,
-                )
+            row = AgentInteraction(
+                user_id=user_id,
+                thread_id=thread_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                latency_ms=latency_ms,
+                model=model,
+                prompt_tokens=pt or None,
+                completion_tokens=ct or None,
+                total_tokens=tt,
+                cost_usd=cost,
+                llm_ms=llm_ms,
+                exec_ms=exec_ms,
+                step_count=step_count,
+                tool_count=tool_count,
+                status=status,
+                error_type=error_type,
+                error_detail=error_detail,
             )
+            session.add(row)
+            # Flush *inside* the transaction so the autoincrement id is
+            # populated before the context manager commits and expires the
+            # ORM object. Reading row.id after the commit would raise.
+            session.flush()
+            return int(row.id) if row.id is not None else None
     except Exception:
         # Analytics is best-effort — never let DB hiccups break the user-facing flow.
-        pass
+        return None
 
 
 class ThreadMessage(BaseModel):
@@ -505,7 +514,7 @@ async def stream_agent(
                 error_type = "soft_refusal"
                 error_detail = _short(full_text, 500)
 
-            _persist_interaction(
+            interaction_id = _persist_interaction(
                 user_id=user_id,
                 thread_id=thread_id,
                 user_message=body.message,
@@ -522,7 +531,17 @@ async def stream_agent(
                 error_detail=error_detail,
             )
 
-            yield _sse({"type": "done", "thread_id": thread_id, "ms": int(latency_ms)})
+            # `interaction_id` is the FK the client needs when later POSTing
+            # feedback for this turn. Older clients that don't read this field
+            # are unaffected.
+            done_event: dict[str, Any] = {
+                "type": "done",
+                "thread_id": thread_id,
+                "ms": int(latency_ms),
+            }
+            if interaction_id is not None:
+                done_event["interaction_id"] = interaction_id
+            yield _sse(done_event)
         except Exception as e:  # noqa: BLE001
             latency_ms = (time.perf_counter() - started) * 1000.0
             status = "hard_error"
