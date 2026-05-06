@@ -30,9 +30,15 @@ import {
   readStoredActiveSession,
   writeStoredActiveSession,
 } from "@/lib/activeSession";
-import { getThreadHistory, streamAgent } from "@/lib/api";
+import { getAgentFiles, getThreadHistory, streamAgent } from "@/lib/api";
 import { useHotkey } from "@/lib/useHotkeys";
-import type { ChatMessage, StepEvent, TodoItem, TurnSummary } from "@/lib/types";
+import type {
+  AgentAttachment,
+  ChatMessage,
+  StepEvent,
+  TodoItem,
+  TurnSummary,
+} from "@/lib/types";
 
 function prettyName(name: string) {
   return String(name || "step").replace(/[_-]+/g, " ");
@@ -74,6 +80,12 @@ export default function Home() {
   /** Mirrors steps/todos so onDone (closure-captured) can snapshot the latest state for the bubble's persistent summary. */
   const stepsRef = useRef<TaskStep[]>([]);
   const todosRef = useRef<TodoItem[]>([]);
+  /** Names of files that already existed in the deep-agent's virtual FS
+   * before the current turn started. We compare this against the post-turn
+   * list so the resulting download chips show only what THIS turn produced
+   * (otherwise every assistant message would re-list everything from the
+   * whole conversation). */
+  const priorFileNamesRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     stepsRef.current = steps;
   }, [steps]);
@@ -338,6 +350,23 @@ export default function Home() {
     streamAccumRef.current = "";
     streamThreadIdRef.current = threadId;
 
+    // Snapshot the current set of agent files so we can later compute the
+    // delta and only show NEW attachments under this turn's bubble. Best-
+    // effort — if the call fails (e.g. brand-new thread with no files yet)
+    // we just start from an empty set, which means the post-turn diff
+    // surfaces everything. Skipped when there's no thread yet because the
+    // backend has nothing keyed off it.
+    if (threadId) {
+      try {
+        const before = await getAgentFiles({ backendUrl, userId, threadId });
+        priorFileNamesRef.current = new Set(before.files.map((f) => f.name));
+      } catch {
+        priorFileNamesRef.current = new Set();
+      }
+    } else {
+      priorFileNamesRef.current = new Set();
+    }
+
     setStreaming(true);
     setStatus("Thinking…");
 
@@ -478,6 +507,41 @@ export default function Home() {
             interaction_id
           );
 
+          // After-the-fact: fetch the post-turn file list, diff against the
+          // pre-turn snapshot, and patch the just-pushed assistant message
+          // with whatever the agent newly produced. Failures are silent —
+          // the bubble simply renders without download chips.
+          if (thread_id) {
+            const before = priorFileNamesRef.current;
+            void getAgentFiles({ backendUrl, userId, threadId: thread_id })
+              .then((after) => {
+                if (epoch !== streamEpochRef.current) return;
+                const fresh = after.files.filter((f) => !before.has(f.name));
+                if (fresh.length === 0) return;
+                const attachments: AgentAttachment[] = fresh.map((f) => ({
+                  name: f.name,
+                  size: f.size,
+                  mime: f.mime,
+                }));
+                setTranscript((prev) => {
+                  // Patch the most recent assistant message — the one we
+                  // just pushed above. Walk from the end so we don't
+                  // accidentally tag an older bubble.
+                  for (let i = prev.length - 1; i >= 0; i--) {
+                    if (prev[i].role === "assistant") {
+                      const next = prev.slice();
+                      next[i] = { ...prev[i], attachments };
+                      return next;
+                    }
+                  }
+                  return prev;
+                });
+              })
+              .catch(() => {
+                /* network error / no endpoint yet — silently no-op */
+              });
+          }
+
           if (thread_id) {
             const titleMsg =
               transcript.find((t) => t.role === "user")?.text || text;
@@ -585,6 +649,8 @@ export default function Home() {
                       text={m.text}
                       summary={m.summary}
                       interactionId={m.interactionId}
+                      attachments={m.attachments}
+                      threadId={threadId}
                       onRegenerate={isLastAssistant ? regenerateLast : undefined}
                       onFollowup={isLastAssistant ? followupHint : undefined}
                     />

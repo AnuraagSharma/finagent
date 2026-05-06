@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { Markdown } from "./Markdown";
-import { postFeedback } from "@/lib/api";
+import { downloadAgentFile, postFeedback } from "@/lib/api";
 import { renderMarkdownLite } from "@/lib/markdown";
 import { cn } from "@/lib/cn";
 import { useSessionFeedback, useSettings } from "@/lib/stores";
@@ -13,6 +13,8 @@ import {
   Check,
   ChevronDown,
   Copy as CopyIcon,
+  Download,
+  FileText,
   RotateCw,
   Sparkles,
   ThumbsDown,
@@ -20,7 +22,7 @@ import {
   Reply,
   X,
 } from "lucide-react";
-import type { TurnSummary } from "@/lib/types";
+import type { AgentAttachment, TurnSummary } from "@/lib/types";
 
 /**
  * Quick-pick reasons offered after the user clicks 👍 / 👎. Mirrors Claude.ai's
@@ -53,9 +55,21 @@ type Props = {
    * absent (e.g. messages restored from before this field was wired), the
    * feedback buttons become disabled. */
   interactionId?: number;
+  /** Files the agent newly produced during this turn. Renders as a download
+   * chip row beneath the bubble. Empty / undefined → no chips shown. */
+  attachments?: AgentAttachment[];
+  /** The thread these attachments belong to — needed to build the
+   * download URL. The chip is only clickable when this is set. */
+  threadId?: string | null;
   onRegenerate?: () => void;
   onFollowup?: () => void;
 };
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function fmtDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -213,11 +227,43 @@ function IconAction({
   );
 }
 
-export function Bubble({ role, text, meta, summary, interactionId, onRegenerate, onFollowup }: Props) {
+export function Bubble({
+  role,
+  text,
+  meta,
+  summary,
+  interactionId,
+  attachments,
+  threadId,
+  onRegenerate,
+  onFollowup,
+}: Props) {
   const isAssistant = role === "assistant";
   const show = useToast((s) => s.show);
   const { backendUrl, userId } = useSettings();
   const [copied, setCopied] = useState(false);
+  const [downloadingName, setDownloadingName] = useState<string | null>(null);
+
+  async function handleDownload(att: AgentAttachment) {
+    if (!threadId) {
+      show("Can't download — no thread context.");
+      return;
+    }
+    setDownloadingName(att.name);
+    try {
+      await downloadAgentFile({
+        backendUrl,
+        userId,
+        threadId,
+        filename: att.name,
+      });
+    } catch (e: unknown) {
+      const msg = (e as { message?: string })?.message || "Download failed.";
+      show(msg);
+    } finally {
+      setDownloadingName(null);
+    }
+  }
 
   /**
    * Feedback state — mirrors Claude.ai's flow:
@@ -361,6 +407,49 @@ export function Bubble({ role, text, meta, summary, interactionId, onRegenerate,
     <div className="max-w-[860px] flex-1">
       {summary && <TurnSummaryPill summary={summary} />}
       <div className="relative px-1 py-2">{content}</div>
+      {attachments && attachments.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5 px-1">
+          {attachments.map((att) => {
+            const downloading = downloadingName === att.name;
+            // Show only the leaf name in the chip — the full virtual path
+            // can be deep (`reports/q4/summary.csv`) and would clip the
+            // size badge off the right side.
+            const leaf = att.name.split("/").pop() || att.name;
+            return (
+              <button
+                key={att.name}
+                type="button"
+                disabled={downloading}
+                onClick={() => handleDownload(att)}
+                title={att.name}
+                className={cn(
+                  "group inline-flex items-center gap-2 rounded-[10px] border border-[var(--stroke)]",
+                  "bg-[var(--panel)]/70 px-2.5 py-1.5 text-[12.5px] font-medium",
+                  "text-[var(--text)] transition-colors",
+                  "hover:border-[var(--stroke-accent)] hover:bg-[var(--accent-soft)]/60",
+                  "disabled:cursor-wait disabled:opacity-60",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
+                )}
+              >
+                <FileText
+                  size={13}
+                  strokeWidth={2}
+                  className="text-[var(--muted-2)] group-hover:text-[var(--accent)]"
+                />
+                <span className="max-w-[260px] truncate">{leaf}</span>
+                <span className="num text-[10.5px] text-[var(--muted-3)]">
+                  {formatBytes(att.size)}
+                </span>
+                <Download
+                  size={12}
+                  strokeWidth={2.25}
+                  className="text-[var(--muted-3)] group-hover:text-[var(--accent)]"
+                />
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="mt-1.5 flex items-center gap-0.5 px-1">
         <IconAction
           label={copied ? "Copied" : "Copy"}

@@ -26,6 +26,18 @@ export type ChatMessage = {
    * when the user clicks like / dislike. Undefined for old messages persisted
    * before this field existed (their feedback button stays disabled). */
   interactionId?: number;
+  /** Files the agent newly produced during this turn (deepagents virtual FS).
+   * Populated after `onDone` by diffing the per-thread file list against the
+   * snapshot taken before this turn started. Renders as download chips below
+   * the bubble. */
+  attachments?: AgentAttachment[];
+};
+
+export type AgentAttachment = {
+  /** Full virtual-FS path (may contain slashes). Used as the API filename. */
+  name: string;
+  size: number;
+  mime: string;
 };
 
 export type StepEvent = {

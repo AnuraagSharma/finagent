@@ -138,6 +138,88 @@ export async function getThreadHistory({
   };
 }
 
+// ---------- Agent files (deepagents virtual FS) ----------
+
+export type AgentFile = {
+  name: string;
+  size: number;
+  mime: string;
+};
+
+export type AgentFiles = {
+  thread_id: string;
+  files: AgentFile[];
+};
+
+export async function getAgentFiles({
+  backendUrl,
+  userId,
+  threadId,
+  signal,
+}: {
+  backendUrl: string;
+  userId: string;
+  threadId: string;
+  signal?: AbortSignal;
+}): Promise<AgentFiles> {
+  const url = `${backendUrl.replace(/\/+$/, "")}/v1/agent/files/${encodeURIComponent(
+    threadId
+  )}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { "X-User-Id": userId },
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  }
+  return (await res.json()) as AgentFiles;
+}
+
+/** Fetch one agent-written file as a blob and trigger a Save-As download
+ *  in the browser. We can't use a plain `<a download>` because the backend
+ *  requires the `X-User-Id` header, and anchors don't let us set headers.
+ *  So: JS fetch → blob → object URL → click hidden anchor → revoke URL. */
+export async function downloadAgentFile({
+  backendUrl,
+  userId,
+  threadId,
+  filename,
+}: {
+  backendUrl: string;
+  userId: string;
+  threadId: string;
+  filename: string;
+}): Promise<void> {
+  // Encode each path component independently so slashes inside filenames
+  // (deepagents agents sometimes use shallow folders) survive intact.
+  const parts = filename.split("/").map(encodeURIComponent).join("/");
+  const url = `${backendUrl.replace(/\/+$/, "")}/v1/agent/files/${encodeURIComponent(
+    threadId
+  )}/${parts}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { "X-User-Id": userId },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  }
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  // Strip any folder prefix so the browser uses just the leaf name.
+  a.download = filename.split("/").pop() || filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Free memory after the download has had a tick to start.
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+}
+
 // ---------- Analytics ----------
 
 export type AnalyticsFilters = {

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 
 from finagent.api.v1.routes.agent import router as agent_router
+from finagent.api.v1.routes.agent_files import router as agent_files_router
 from finagent.api.v1.routes.analytics import router as analytics_router
 from finagent.api.v1.routes.feedback import router as feedback_router
 from finagent.db.models import Base, ApiRequest
@@ -131,6 +132,7 @@ async def request_logging_middleware(request: Request, call_next: Callable[[Requ
 
 
 app.include_router(agent_router)
+app.include_router(agent_files_router)
 app.include_router(analytics_router)
 app.include_router(feedback_router)
 
