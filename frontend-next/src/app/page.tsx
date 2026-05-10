@@ -73,6 +73,12 @@ export default function Home() {
   const abortRef = useRef<AbortController | null>(null);
   /** Mirrors streaming assistant text so Stop can persist a partial bubble. */
   const streamAccumRef = useRef("");
+  /** Pending rAF id for coalesced setStreamingText updates. The SSE handler can
+   * fire onToken many times synchronously within a single TCP chunk; setting
+   * React state on every one breaches React 19's nestedUpdateCount limit and
+   * surfaces as "Maximum update depth exceeded". We accumulate in
+   * streamAccumRef and flush via rAF so React only sees ~60 updates/sec. */
+  const tokenRafRef = useRef<number | null>(null);
   /** Bumped when starting a new navigation context so stale stream callbacks are ignored. */
   const streamEpochRef = useRef(0);
   /** Thread id for the in-flight streamed turn (continuation or backend start). */
@@ -446,10 +452,25 @@ export default function Home() {
           }
           buffer += t;
           streamAccumRef.current = buffer;
-          setStreamingText(buffer);
+          // Coalesce per-token setStates into one update per animation frame.
+          // Without this, a single SSE chunk carrying many token frames calls
+          // setStreamingText synchronously back-to-back, which trips React 19's
+          // "Maximum update depth exceeded" guard. Visually identical to the
+          // user; just bounded at ~60Hz.
+          if (tokenRafRef.current === null) {
+            tokenRafRef.current = requestAnimationFrame(() => {
+              tokenRafRef.current = null;
+              if (epoch !== streamEpochRef.current) return;
+              setStreamingText(streamAccumRef.current);
+            });
+          }
         },
         onAbort: () => {
           if (epoch !== streamEpochRef.current) return;
+          if (tokenRafRef.current !== null) {
+            cancelAnimationFrame(tokenRafRef.current);
+            tokenRafRef.current = null;
+          }
           abortRef.current = null;
           const partial = streamAccumRef.current.trim();
           streamAccumRef.current = "";
@@ -471,6 +492,10 @@ export default function Home() {
         },
         onDone: ({ thread_id, ms, interaction_id }) => {
           if (epoch !== streamEpochRef.current) return;
+          if (tokenRafRef.current !== null) {
+            cancelAnimationFrame(tokenRafRef.current);
+            tokenRafRef.current = null;
+          }
           if (thread_id) setThreadId(thread_id);
           const took = ms ?? Math.round(performance.now() - startedAt);
           setTaskDone(true);
@@ -553,6 +578,10 @@ export default function Home() {
         },
         onError: (msg) => {
           if (epoch !== streamEpochRef.current) return;
+          if (tokenRafRef.current !== null) {
+            cancelAnimationFrame(tokenRafRef.current);
+            tokenRafRef.current = null;
+          }
           streamAccumRef.current = "";
           setStatus("Error.");
           setStreaming(false);
